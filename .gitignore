@@ -1,0 +1,154 @@
+# Discord Bot - Git Ignore
+# ไฟล์และโฟลเดอร์ที่ห้ามอัพขึ้น GitHub
+
+# =================== ข้อมูลสำคัญ ===================
+# Token และข้อมูลลับ
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.env
+config.py  # ถ้ามี token
+secrets.py
+tokens.py
+*.key
+*.pem
+*.crt
+
+# ไฟล์ Discord Token ที่อาจมี
+DISCORD TOKEN.txt
+*token*.txt
+*Token*.txt
+
+# =================== Database & Logs ===================
+# ฐานข้อมูล
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+
+# Logs
+logs/
+*.log
+log/
+
+# =================== Build & Dist ===================
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Executable
+*.exe
+*.dll
+*.pyd
+*.so
+*.dylib
+
+# =================== Python ===================
+# Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =================== IDE & Editor ===================
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm/IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# Eclipse
+.project
+.pydevproject
+
+# =================== OS Files ===================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.nfs*
+
+# =================== Music & Media ===================
+# ไฟล์เพลงที่ download มา
+music/downloads/
+music/cache/
+*.mp3
+*.mp4
+*.wav
+*.ogg
+*.webm
+*.m4a
+*.flac
+
+# FFmpeg binaries (ถ้ามี)
+ffmpeg/*.exe
+ffmpeg/ffmpeg
+
+# =================== Cloud Sync ===================
+# อย่าอัพไฟล์ที่ sync จาก cloud
+*.tmp
+*.temp
+.sync/
+
+# =================== Testing ===================
+# Test coverage
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
+# =================== Misc ===================
+# ไฟล์ชั่วคราว
+*.bak
+*.swp
+*.swo
+*~
+*.tmp
+.temp/
+tmp/
+
+# ไฟล์ที่อาจมีข้อมูลส่วนตัว
+notes.txt
+note
+*.private

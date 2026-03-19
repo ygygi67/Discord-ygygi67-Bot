@@ -1,0 +1,21 @@
+{
+    "enabled_commands": {
+        "ping": false,
+        "serverinfo": true,
+        "userinfo": true,
+        "botinfo": true,
+        "invite": true,
+        "channels": true,
+        "help": true,
+        "stats": true,
+        "voice_stats": true,
+        "system_stats": true,
+        "monitor": true,
+        "monitor_continuous": true
+    },
+    "command_settings": {
+        "monitor_duration": 30,
+        "monitor_interval": 1,
+        "stats_update_interval": 5
+    }
+}
