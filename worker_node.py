@@ -19,7 +19,7 @@ else:
 
 sys.path.insert(0, BASE_DIR)
 
-from shared_queue import AsyncSharedQueue, Task, get_queue
+from core.shared_queue import AsyncSharedQueue, Task, get_queue
 
 class WorkerNode:
     """
