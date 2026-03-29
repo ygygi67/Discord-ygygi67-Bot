@@ -136,10 +136,24 @@ class AlphaBotBase:
                 commands_list = await self.tree.sync()
                 logger.info("Global tree synced")
             
-            # Print a neat summary of all loaded commands
+            # Print command summary with wrapped lines for readability
             if commands_list:
                 cmd_names = [f"/{cmd.name}" for cmd in commands_list]
-                logger.info(f"✅ โหลดสำเร็จ {len(commands_list)} คำสั่ง: {', '.join(cmd_names)}")
+                logger.info(f"✅ โหลดสำเร็จ {len(commands_list)} คำสั่ง:")
+                chunk_size = 8
+                for i in range(0, len(cmd_names), chunk_size):
+                    logger.info(f"   > {', '.join(cmd_names[i:i + chunk_size])}")
+
+                # Sanity check: catch cases where a whole block of commands silently disappears
+                # (e.g., accidentally indented under a UI View class instead of the Cog).
+                synced_names = {cmd.name for cmd in commands_list}
+                expected_core = {"คำสั่ง", "สถิติ", "เสียง", "ระบบ", "ติดตาม", "เชิญบอทเต็ม", "โหลดคลิป"}
+                missing_expected = sorted(expected_core - synced_names)
+                if missing_expected:
+                    logger.warning(
+                        f"⚠️ คำสั่งบางส่วนหายจากการซิงค์: {', '.join('/' + n for n in missing_expected)} "
+                        f"(ถ้าไม่ตั้งใจให้หาย ให้ตรวจสอบการประกาศ @app_commands.command ใน Cog)"
+                    )
             else:
                 logger.warning("⚠️ ไม่มีคำสั่งถูกโหลดขึ้นมาเลย")
                 
@@ -147,7 +161,10 @@ class AlphaBotBase:
             logger.warning(f"⚠️ Missing access to sync tree for guild {guild_id}. Falling back to global sync...")
             commands_list = await self.tree.sync()
             cmd_names = [f"/{cmd.name}" for cmd in commands_list]
-            logger.info(f"✅ โหลดสำเร็จ {len(commands_list)} คำสั่ง (fallback): {', '.join(cmd_names)}")
+            logger.info(f"✅ โหลดสำเร็จ {len(commands_list)} คำสั่ง (fallback):")
+            chunk_size = 8
+            for i in range(0, len(cmd_names), chunk_size):
+                logger.info(f"   > {', '.join(cmd_names[i:i + chunk_size])}")
         except Exception as e:
             logger.error(f"Failed to sync tree: {e}")
 
@@ -282,4 +299,3 @@ def run_bot():
 
 if __name__ == "__main__":
     run_bot()
-
