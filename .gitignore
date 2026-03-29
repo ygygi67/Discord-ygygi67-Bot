@@ -152,3 +152,8 @@ tmp/
 notes.txt
 note
 *.private
+nots
+
+# Runtime exports / temp outputs
+exports/
+follow_checker_log.txt
