@@ -11,7 +11,178 @@ import json
 from datetime import datetime, timezone
 import time
 import uuid
+import random
+from difflib import SequenceMatcher
+
 logger = logging.getLogger('music_cog')
+
+# ═══════════════════════════════════════════════════════
+# 🎵 MUSIC RECOMMENDATION SYSTEM (YouTube Music-like)
+# ═══════════════════════════════════════════════════════
+
+class MusicRecommendationEngine:
+    """ระบบแนะนำเพลงอัจฉริยะ - เรียนรู้รสนิยมและแนะนำเพลงที่เหมาะสม"""
+    
+    def __init__(self, cog):
+        self.cog = cog
+        self.recommendation_cache = {}
+        self.fallback_playlist_id = "PLClZz0mM3CSkzq9OPkgpqjlosUqxtO78m"
+        self.fallback_tracks = []
+        self.last_fallback_update = 0
+        
+    async def load_fallback_playlist(self):
+        """โหลดเพลงจาก playlist สำรองทุก 6 ชั่วโมง"""
+        current_time = time.time()
+        if current_time - self.last_fallback_update < 21600 and self.fallback_tracks:  # 6 hours
+            return self.fallback_tracks
+            
+        try:
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+                'playlistend': 100,  # โหลดแค่ 100 เพลงแรก
+            }
+            
+            playlist_url = f"https://www.youtube.com/playlist?list={self.fallback_playlist_id}"
+            
+            def extract():
+                with YoutubeDL(ydl_opts) as ydl:
+                    return ydl.extract_info(playlist_url, download=False)
+            
+            info = await asyncio.get_event_loop().run_in_executor(None, extract)
+            
+            if info and 'entries' in info:
+                self.fallback_tracks = []
+                for entry in info['entries']:
+                    if entry:
+                        track = MusicTrack(
+                            title=entry.get('title', 'Unknown'),
+                            url=entry.get('url'),
+                            duration=entry.get('duration', 0),
+                            webpage_url=entry.get('webpage_url', entry.get('url')),
+                            source="fallback_playlist"
+                        )
+                        if self.is_good_quality_track(track):
+                            self.fallback_tracks.append(track)
+                
+                self.last_fallback_update = current_time
+                logger.info(f"[MusicRec] Loaded {len(self.fallback_tracks)} tracks from fallback playlist")
+                
+        except Exception as e:
+            logger.error(f"[MusicRec] Failed to load fallback playlist: {e}")
+            
+        return self.fallback_tracks
+        
+    def get_random_fallback_track(self) -> Optional['MusicTrack']:
+        """สุ่มเพลงจาก playlist สำรอง"""
+        if self.fallback_tracks:
+            return random.choice(self.fallback_tracks)
+        return None
+        
+    def extract_artist_from_title(self, title: str) -> str:
+        """แยกชื่อศิลปินจากชื่อเพลง"""
+        separators = [' - ', ' – ', ' — ', ': ', ' | ']
+        for sep in separators:
+            if sep in title:
+                parts = title.split(sep, 1)
+                if len(parts) == 2:
+                    artist = parts[0].strip()
+                    if len(artist) > 2 and not artist.isdigit():
+                        return artist
+        return ""
+    
+    def get_search_strategies(self, last_track) -> list:
+        """สร้างหลายกลยุทธ์การค้นหา"""
+        title = last_track.title
+        artist = self.extract_artist_from_title(title)
+        clean_title = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', title).strip()
+        
+        strategies = []
+        
+        if artist and len(artist) > 2:
+            strategies.extend([
+                f"{artist} greatest hits",
+                f"{artist} popular songs",
+                f"{artist} เพลงฮิต",
+            ])
+        
+        strategies.extend([
+            f"songs similar to {clean_title}",
+            f"music like {clean_title}",
+            "top music 2024",
+            "popular songs this week",
+        ])
+        
+        return strategies
+    
+    def is_good_quality_track(self, track) -> bool:
+        """ตรวจสอบคุณภาพเพลง"""
+        title_lower = track.title.lower()
+        
+        bad_keywords = [
+            'live', 'concert', 'performance', 'karaoke',
+            '1 hour', '10 hours', 'loop', ' slowed ', ' reverb',
+            'reaction', 'review', 'tutorial', 'how to',
+            'minecraft', 'roblox', 'fortnite', 'gameplay'
+        ]
+        
+        for keyword in bad_keywords:
+            if keyword in title_lower:
+                return False
+        
+        if track.duration > 0:
+            if track.duration < 60 or track.duration > 600:
+                return False
+        
+        return True
+    
+    def calculate_similarity(self, track1, track2) -> float:
+        """คำนวณความคล้ายคลึง (0-1)"""
+        title1 = track1.title.lower()
+        title2 = track2.title.lower()
+        
+        similarity = SequenceMatcher(None, title1, title2).ratio()
+        
+        artist1 = self.extract_artist_from_title(track1.title).lower()
+        artist2 = self.extract_artist_from_title(track2.title).lower()
+        if artist1 and artist2 and (artist1 in artist2 or artist2 in artist1):
+            similarity += 0.3
+        
+        return min(similarity, 1.0)
+    
+    async def find_best_recommendation(self, guild_id: int, last_track) -> Optional['MusicTrack']:
+        """หาเพลงแนะนำที่ดีที่สุด - ถ้าไม่เจอจากกลยุทธ์ปกติ ให้ใช้ fallback playlist"""
+        strategies = self.get_search_strategies(last_track)
+        candidates = []
+        
+        for strategy in strategies[:4]:
+            try:
+                track = await self.cog.search_track(strategy)
+                if track and self.is_good_quality_track(track):
+                    score = self.calculate_similarity(last_track, track)
+                    candidates.append((track, score))
+                    
+                    if score > 0.5:
+                        break
+                        
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.warning(f"[MusicRec] Search failed: {e}")
+                continue
+        
+        if candidates:
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            return candidates[0][0]
+        
+        # 🎯 Fallback: ถ้าไม่เจอเพลงที่ดี ให้ใช้ playlist สำรอง
+        logger.info("[MusicRec] No good recommendation found, using fallback playlist")
+        await self.load_fallback_playlist()
+        return self.get_random_fallback_track()
+
+# ═══════════════════════════════════════════════════════
 
 class MusicTrack:
     def __init__(self, title: str, url: str, duration: int = 0, 
@@ -70,6 +241,8 @@ class MusicQueue:
         self.paused_at: float = 0
         self.total_paused: float = 0
         self.is_refreshing: bool = False
+        self.auto_play: bool = False
+        self.is_afk: bool = False
     
     def add(self, track: MusicTrack) -> int:
         self.tracks.append(track)
@@ -197,6 +370,14 @@ class MusicControlView(discord.ui.View):
         await interaction.response.send_message(f"🔉 ลดเสียงเหลือ: **{int(queue.volume * 100)}%**", ephemeral=True)
         await self.music_cog.refresh_playback(interaction.guild.id)
 
+    @discord.ui.button(label="📻", style=discord.ButtonStyle.secondary)
+    async def toggle_auto_play(self, interaction: discord.Interaction, button: discord.ui.Button):
+        queue = self.music_cog.get_queue(interaction.guild.id)
+        queue.auto_play = not queue.auto_play
+        await self.update_state(interaction.guild)
+        status = "เปิด" if queue.auto_play else "ปิด"
+        await interaction.response.send_message(f"📻 {status} โหมดเล่นเพลงอัตโนมัติ (แนะนำเพลงที่เกี่ยวข้อง)", ephemeral=True)
+
 class FilterSelect(discord.ui.Select):
     def __init__(self, music_cog, guild_id):
         self.music_cog = music_cog
@@ -228,9 +409,12 @@ class FilterSelect(discord.ui.Select):
         await interaction.response.send_message(f"🔮 ปรับแต่งเสียง: **{filter_str}** (จะมีผลกับเพลงถัดไปหรือเริ่มใหม่)", ephemeral=True)
 
 class Music(commands.Cog):
+    """🎵 Advanced Music System with Smart Recommendations"""
+    
     def __init__(self, bot):
         self.bot = bot
         self.queues: Dict[int, MusicQueue] = {}
+        self.recommendation_engine = MusicRecommendationEngine(self)  # เครื่องมือแนะนำเพลงอัจฉริยะ
         self.voice_state_file = 'data/music_state.json'
         
         if not os.path.exists('data'):
@@ -249,6 +433,10 @@ class Music(commands.Cog):
         except:
             pass
         
+        # Reload protection
+        self.reload_in_progress = False
+
+        
     async def save_voice_state(self, guild_id: int, channel_id: Optional[int]):
         try:
             full_data = {}
@@ -259,6 +447,14 @@ class Music(commands.Cog):
             guild_id_str = str(guild_id)
             if channel_id:
                 queue = self.get_queue(guild_id)
+                
+                # Calculate current playback position
+                elapsed = 0
+                if queue.current_track and queue.start_time > 0:
+                    elapsed = time.time() - queue.start_time - queue.total_paused
+                    if queue.paused_at > 0:
+                        elapsed -= (time.time() - queue.paused_at)
+                
                 full_data[guild_id_str] = {
                     'channel_id': channel_id,
                     'current_track': queue.current_track.to_dict() if queue.current_track else None,
@@ -267,7 +463,10 @@ class Music(commands.Cog):
                     'shuffle': queue.shuffle_enabled,
                     'volume': queue.volume,
                     'filters': queue.filters,
-                    'text_channel_id': queue.text_channel_id
+                    'text_channel_id': queue.text_channel_id,
+                    'auto_play': queue.auto_play,
+                    'is_afk': queue.is_afk,
+                    'elapsed': max(0, elapsed)  # บันทึกตำแหน่งการเล่นปัจจุบัน
                 }
             else:
                 full_data.pop(guild_id_str, None)
@@ -286,40 +485,102 @@ class Music(commands.Cog):
             logger.error(f"Error loading state: {e}")
         return {}
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        await asyncio.sleep(5) # Wait for guilds
+    async def cog_load(self):
+        """Auto-resume playback when cog loads or bot restarts"""
+        asyncio.create_task(self.auto_resume_on_load())
+
+    async def auto_resume_on_load(self):
+        """Internal method to handle the resume process"""
+        await self.bot.wait_until_ready()
+        # เพิ่มดีเลย์เพื่อให้แน่ใจว่า Cache ของกิลด์และแชแนลโหลดเสร็จสมบูรณ์จริงๆ
+        await asyncio.sleep(15) 
         states = self.load_voice_states()
+
+        
         for g_id, state in states.items():
             guild = self.bot.get_guild(int(g_id))
-            if not guild: continue
+            if not guild:
+                continue
             
-            c_id = state['channel_id'] if isinstance(state, dict) else state
+            c_id = state.get('channel_id') if isinstance(state, dict) else state
+            if not c_id:
+                continue
+                
             channel = guild.get_channel(c_id)
-            if channel and isinstance(channel, discord.VoiceChannel):
-                try:
+            if not channel or not isinstance(channel, discord.VoiceChannel):
+                continue
+                
+            try:
+                # Check if already connected
+                vc = guild.voice_client
+                if not vc:
+                    # Connect to voice channel
                     vc = await channel.connect()
-                    if isinstance(state, dict):
-                        queue = self.get_queue(guild.id)
-                        queue.loop_mode = state.get('loop', 'none')
-                        queue.shuffle_enabled = state.get('shuffle', False)
-                        queue.volume = state.get('volume', 1.0)
-                        queue.filters = state.get('filters', {"bassboost": False, "nightcore": False, "vaporwave": False})
-                        queue.text_channel_id = state.get('text_channel_id')
-                        
-                        # Current track
-                        curr = state.get('current_track')
-                        if curr:
-                            track = await self.search_track(curr.get('webpage_url') or curr.get('url'))
-                            if track:
-                                track.requester = guild.get_member(curr.get('requester_id'))
-                                await self.play_track(vc, track)
-                        
-                        # Queue
-                        for t_data in state.get('queue', []):
-                            queue.tracks.append(MusicTrack.from_dict(t_data, guild))
-                except Exception as e:
-                    logger.error(f"Auto-resume failed for {guild.name}: {e}")
+                    logger.info(f"[AutoResume] Reconnected to {channel.name} in {guild.name}")
+                else:
+                    logger.info(f"[AutoResume] Hijacking existing voice client in {guild.name}")
+                
+                if isinstance(state, dict):
+                    queue = self.get_queue(guild.id)
+                    
+                    # Restore queue settings
+                    queue.loop_mode = state.get('loop', 'none')
+                    queue.shuffle_enabled = state.get('shuffle', False)
+                    queue.volume = state.get('volume', 1.0)
+                    queue.filters = state.get('filters', {"bassboost": False, "nightcore": False, "vaporwave": False})
+                    queue.text_channel_id = state.get('text_channel_id')
+                    queue.auto_play = state.get('auto_play', False)
+                    queue.is_afk = state.get('is_afk', False)
+                    
+                    # Restore queue tracks
+                    for t_data in state.get('queue', []):
+                        track = MusicTrack.from_dict(t_data, guild)
+                        if track:
+                            queue.tracks.append(track)
+                    
+                    # Restore and resume current track
+                    curr_data = state.get('current_track')
+                    if curr_data:
+                        current_track = MusicTrack.from_dict(curr_data, guild)
+                        if current_track:
+                            # Restore requester
+                            requester_id = curr_data.get('requester_id')
+                            if requester_id:
+                                current_track.requester = guild.get_member(requester_id)
+                            
+                            # Calculate resume position
+                            elapsed = state.get('elapsed', 0)
+                            if elapsed > 5:  # Resume from 5 seconds before to avoid missing anything
+                                resume_pos = max(0, elapsed - 5)
+                            else:
+                                resume_pos = 0
+                            
+                            logger.info(f"[AutoResume] Resuming {current_track.title} from {resume_pos}s")
+                            
+                            # Set as current track and play from position
+                            queue.current_track = current_track
+                            await self.play_track(vc, current_track, seek=resume_pos)
+                            
+                            # Notify in text channel
+                            if queue.text_channel_id:
+                                text_channel = guild.get_channel(queue.text_channel_id)
+                                if text_channel:
+                                    embed = discord.Embed(
+                                        title="🔄 กลับมาเล่นต่อจากที่ค้างไว้",
+                                        description=f"**{current_track.title}**\n▶️ เริ่มที่: `{int(resume_pos//60)}:{int(resume_pos%60):02d}`",
+                                        color=discord.Color.blue()
+                                    )
+                                    await text_channel.send(embed=embed)
+                    else:
+                        # No current track but have queue - start playing queue
+                        if queue.tracks and not vc.is_playing():
+                            next_track = queue.get_next()
+                            if next_track:
+                                await self.play_track(vc, next_track)
+                                logger.info(f"[AutoResume] Started playing queue: {next_track.title}")
+                                
+            except Exception as e:
+                logger.error(f"[AutoResume] Failed for {guild.name}: {e}")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -425,10 +686,41 @@ class Music(commands.Cog):
             if channel:
                 await self.send_now_playing(channel, next_t)
         elif vc:
+            if queue.is_afk: return
             await asyncio.sleep(300)
             if vc and not vc.is_playing() and not [m for m in vc.channel.members if not m.bot]:
                 await vc.disconnect()
                 await self.save_voice_state(guild.id, None)
+            elif vc and not vc.is_playing() and queue.auto_play:
+                # 🎯 ใช้ระบบแนะนำเพลงอัจฉริยะแทนการค้นหาง่าย ๆ
+                last_track = queue.history[-1] if queue.history else queue.current_track
+                if last_track:
+                    logger.info(f"[AutoPlay] Finding recommendation based on: {last_track.title}")
+                    
+                    # ใช้ recommendation engine เพื่อหาเพลงที่ดีที่สุด
+                    recommended = await self.recommendation_engine.find_best_recommendation(guild.id, last_track)
+                    
+                    if recommended:
+                        recommended.requester = None  # บอทจัดมาให้
+                        queue.add(recommended)
+                        logger.info(f"[AutoPlay] Added recommended track: {recommended.title}")
+                        
+                        # แจ้งผู้ใช้ว่ากำลังเล่นเพลงแนะนำ
+                        if queue.text_channel_id:
+                            channel = guild.get_channel(queue.text_channel_id)
+                            if channel:
+                                embed = discord.Embed(
+                                    title="🎵 เพลงแนะนำโดยอัตโนมัติ",
+                                    description=f"**{recommended.title}**",
+                                    color=discord.Color.green()
+                                )
+                                embed.set_footer(text="📻 เปิด Auto-Play เพื่อให้บอทแนะนำเพลงต่อเนื่อง")
+                                await channel.send(embed=embed)
+                        
+                        # เล่นเพลงที่เพิ่มเข้ามา
+                        await self.handle_track_end(guild)
+                    else:
+                        logger.warning("[AutoPlay] Could not find good recommendation")
 
     async def send_now_playing(self, channel: discord.TextChannel, track: MusicTrack):
         queue = self.get_queue(channel.guild.id)
@@ -500,61 +792,8 @@ class Music(commands.Cog):
             next_t = queue.get_next()
             await self.play_track(vc, next_t)
             await self.send_now_playing(interaction.channel, next_t)
-            await interaction.followup.send(f"✅ เริ่มเล่น: **{track.title}**")
-        else:
-            await self.save_voice_state(interaction.guild.id, vc.channel.id)
-            await interaction.followup.send(f"✅ เพิ่มเข้าคิวที่ #{pos}: **{track.title}**")
-
-    async def _process_playlist(self, interaction: discord.Interaction, query: str):
-        try:
             with YoutubeDL({'extract_flat': 'in_playlist', 'quiet': True}) as ydl:
-                info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(query, download=False, process=False))
-                if not info or 'entries' not in info: return
-                entries = list(info['entries'])
-                queue = self.get_queue(interaction.guild.id)
-                queue.text_channel_id = interaction.channel_id
-                vc = interaction.guild.voice_client
-                
-                status_msg = await interaction.channel.send(f"🎶 เริ่มทยอยเพิ่มเพลย์ลิสต์จำนวน {len(entries)} เพลง...")
-                
-                for i, entry in enumerate(entries):
-                    # Progress Update & ETA every 5 tracks
-                    if i % 5 == 0:
-                        remaining = len(entries) - i
-                        # Approx 2s per track (search + sleep)
-                        eta_sec = remaining * 2
-                        eta_str = f"{eta_sec // 60} นาที {eta_sec % 60} วินาที" if eta_sec > 60 else f"{eta_sec} วินาที"
-                        try:
-                            await status_msg.edit(content=(
-                                f"🎶 **กำลังเพิ่มเพลงลงคิว...** ({i+1}/{len(entries)})\n"
-                                f"💿 **เพลงล่าสุด:** {entry.get('title', 'Unknown')[:50]}...\n"
-                                f"⏳ **คาดว่าเสร็จสิ้นใน:** {eta_str}"
-                            ))
-                        except: pass
-
-                    url = entry.get('url') or entry.get('webpage_url') or (f"https://www.youtube.com/watch?v={entry['id']}" if entry.get('id') else None)
-                    if url:
-                        track = await self.search_track(url)
-                        if track:
-                            track.requester = interaction.user
-                            queue.add(track)
-                            if i == 0 and not vc.is_playing():
-                                next_t = queue.get_next()
-                                await self.play_track(vc, next_t)
-                                await self.send_now_playing(interaction.channel, next_t)
-                    
-                    if i % 10 == 0: await self.save_voice_state(interaction.guild.id, vc.channel.id)
-                    await asyncio.sleep(1)
-                
-                await status_msg.edit(content=f"✅ เพิ่มเพลย์ลิสต์สำเร็จทั้งหมด **{len(entries)}** เพลง!")
-        except Exception as e:
-            logger.error(f"Playlist error: {e}")
-
-    @app_commands.command(name="ข้าม", description="ข้ามเพลงปัจจุบัน")
-    async def skip(self, interaction: discord.Interaction):
-        vc = interaction.guild.voice_client
-        if vc and (vc.is_playing() or vc.is_paused()):
-            vc.stop()
+                return ydl.extract_info(query, download=False, process=False)
             await interaction.response.send_message("⏭️ ข้ามแล้ว")
         else:
             await interaction.response.send_message("❌ ไม่มีเพลงเล่นอยู่", ephemeral=True)
@@ -583,6 +822,34 @@ class Music(commands.Cog):
         else:
             await interaction.response.send_message("❌ ไม่ได้อยู่ในห้องเสียง", ephemeral=True)
 
+    @app_commands.command(name="afk", description="ให้บอทอยู่ในช่องเสียงตลอดไป (แม้จะเล่นเพลงจบแล้ว)")
+    @app_commands.describe(channel="ช่องที่ต้องการให้บอทเข้า (ถ้าไม่ระบุจะเข้าช่องที่คุณอยู่)")
+    async def toggle_afk(self, interaction: discord.Interaction, channel: Optional[discord.VoiceChannel] = None):
+        target_channel = channel
+        if not target_channel:
+            if interaction.user.voice:
+                target_channel = interaction.user.voice.channel
+            else:
+                return await interaction.response.send_message("❌ กรุณาระบุช่องเสียง หรือเข้าช่องเสียงก่อนใช้คำสั่งนี้", ephemeral=True)
+        
+        await interaction.response.defer()
+        
+        queue = self.get_queue(interaction.guild.id)
+        queue.is_afk = not queue.is_afk
+        
+        vc = interaction.guild.voice_client
+        if queue.is_afk:
+            if not vc:
+                vc = await target_channel.connect()
+            elif vc.channel.id != target_channel.id:
+                await vc.move_to(target_channel)
+            
+            await self.save_voice_state(interaction.guild.id, target_channel.id)
+            await interaction.followup.send(f"💤 **โหมด AFK เปิดใช้งาน:** บอทจะอยู่ในช่อง **{target_channel.name}** ตลอดไป (ใช้ `/afk` อีกครั้งเพื่อปิด)")
+        else:
+            await self.save_voice_state(interaction.guild.id, vc.channel.id if vc else None)
+            await interaction.followup.send(f"💤 **โหมด AFK ปิดใช้งาน:** บอทจะออกจากช่องนี้หากไม่มีเพลงเล่น (ตามเวลาปกติ)")
+
     @app_commands.command(name="สุ่ม", description="สุ่มคิวเพลง")
     async def shuffle(self, interaction: discord.Interaction):
         q = self.get_queue(interaction.guild.id)
@@ -602,8 +869,15 @@ class Music(commands.Cog):
     async def cog_unload(self):
         if hasattr(self, 'check_downloads'):
             self.check_downloads.cancel()
+        
+        # ถ้าเป็นการ Reload ระบบ (Maintenance) บอทจะไม่ตัดการเชื่อมต่อจากห้องเสียง
+        if self.reload_in_progress:
+            logger.info("[Music] Cog unloading for RELOAD - keeping voice connections alive.")
+            return
+
         for g in self.bot.guilds:
             if g.voice_client: await g.voice_client.disconnect()
+
 
     @tasks.loop(seconds=2)
     async def check_downloads(self):

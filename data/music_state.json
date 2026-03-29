@@ -1,1 +1,19 @@
-{}
+{
+    "1171254331643789332": {
+        "channel_id": 1279771519811190925,
+        "current_track": null,
+        "queue": [],
+        "loop": "none",
+        "shuffle": false,
+        "volume": 1.0,
+        "filters": {
+            "bassboost": false,
+            "nightcore": false,
+            "vaporwave": false
+        },
+        "text_channel_id": null,
+        "auto_play": false,
+        "is_afk": false,
+        "elapsed": 0
+    }
+}

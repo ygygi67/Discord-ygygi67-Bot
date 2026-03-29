@@ -14,6 +14,24 @@ class TTSCommand(commands.Cog):
         self.bot = bot
         self.tts_queue = {}  # {guild_id: asyncio.Queue}
         self.is_playing = {} # {guild_id: bool}
+        self.cleanup_task = self.bot.loop.create_task(self._initial_cleanup())
+
+    async def _initial_cleanup(self):
+        """ลบไฟล์ขยะที่ค้างจากการรันครั้งก่อน"""
+        await self.bot.wait_until_ready()
+        count = 0
+        try:
+            for file in os.listdir('.'):
+                if file.startswith('tts_temp_') and file.endswith('.mp3'):
+                    try:
+                        os.remove(file)
+                        count += 1
+                    except:
+                        pass
+            if count > 0:
+                logger.info(f"Cleanup finished: removed {count} old TTS temp files")
+        except Exception as e:
+            logger.error(f"Error during initial TTS cleanup: {e}")
 
     async def _play_next(self, guild_id):
         if guild_id not in self.tts_queue or self.tts_queue[guild_id].empty():
@@ -22,7 +40,7 @@ class TTSCommand(commands.Cog):
 
         self.is_playing[guild_id] = True
         guild = self.bot.get_guild(guild_id)
-        if not guild or not guild.voice_client:
+        if not guild or not guild.voice_client or not guild.voice_client.is_connected():
             self.is_playing[guild_id] = False
             return
 
@@ -33,25 +51,30 @@ class TTSCommand(commands.Cog):
                 logger.error(f"Error in TTS playback: {error}")
             
             # ลบไฟล์ทิ้งแบบอัจฉริยะ (รอ FFmpeg ปล่อยไฟล์)
-            async def delayed_delete():
-                for _ in range(10): # ลอง 10 ครั้ง (10 วินาที)
-                    await asyncio.sleep(1)
+            async def delayed_delete(path):
+                # รอให้แน่ใจว่า FFmpeg ปล่อยไฟล์แน่ๆ
+                await asyncio.sleep(2)
+                for _ in range(5): 
                     try:
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
+                        if os.path.exists(path):
+                            os.remove(path)
                         break
                     except Exception:
-                        pass
+                        await asyncio.sleep(2)
             
-            self.bot.loop.create_task(delayed_delete())
-                
-            # เล่นคิวถัดไป
+            self.bot.loop.create_task(delayed_delete(file_path))
             self.bot.loop.create_task(self._play_next(guild_id))
 
         try:
             guild.voice_client.play(discord.FFmpegPCMAudio(file_path), after=after_playing)
         except Exception as e:
             logger.error(f"Error playing TTS: {e}")
+            # ถ้าเล่นไม่สำเร็จ ให้ลบไฟล์ทันที
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except:
+                pass
             self.bot.loop.create_task(self._play_next(guild_id))
 
     @app_commands.command(name="พูดตาม", description="สั่งให้บอทพูดข้อความที่คุณต้องการ (พิมพ์ยาวแค่ไหนก็ได้)")
@@ -101,11 +124,16 @@ class TTSCommand(commands.Cog):
             await interaction.followup.send(f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}")
             
             # ถ้าระบบไม่ได้เล่นอยู่ให้เริ่มเล่น
-            if not self.is_playing.get(guild.id, False) and not guild.voice_client.is_playing():
-                await self._play_next(guild.id)
-                
+            if not self.is_playing.get(guild.id, False):
+                if guild.voice_client and guild.voice_client.is_connected():
+                    if not guild.voice_client.is_playing():
+                        await self._play_next(guild.id)
+                else:
+                    self.is_playing[guild.id] = False
+                    
         except Exception as e:
-            logger.error(f"Error generating TTS: {e}")
+            import traceback
+            logger.error(f"Error generating TTS: {e}\n{traceback.format_exc()}")
             await interaction.followup.send("❌ เกิดข้อผิดพลาดในการสร้างเสียงพูด กรุณาลองใหม่")
 
 async def setup(bot):
