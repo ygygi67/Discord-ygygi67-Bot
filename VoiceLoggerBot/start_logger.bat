@@ -1,4 +1,5 @@
 @echo off
+title VoiceLoggerBot
 setlocal
 cd /d "%~dp0"
 

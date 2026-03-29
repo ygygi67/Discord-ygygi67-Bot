@@ -1,4 +1,5 @@
 @echo off
+title bot.py
 echo Starting Discord Bot...
 
 :: Activate virtual environment
