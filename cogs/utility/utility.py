@@ -2,14 +2,20 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import logging
+import traceback
 from datetime import datetime, timedelta, timezone
 import platform
 import psutil
 import os
-import humanize
-import time
 import asyncio
-from collections import defaultdict
+import aiohttp
+import zipfile
+import tempfile
+import shutil
+import re
+import csv
+import io
+import yt_dlp
 
 logger = logging.getLogger('discord_bot')
 
@@ -21,12 +27,25 @@ class Utility(commands.Cog):
         self.public_monitors = {}  # Store active monitors for public version
         self.walking_frames = ["🚶", "🏃", "🚶", "🏃"]  # Walking animation frames
         self.current_frame = 0
-        self.cooldowns = defaultdict(lambda: defaultdict(float))
-        self.userinfo_cooldown = 300  # 5 minutes cooldown for user info
-        self.serverinfo_cooldown = 600  # 10 minutes cooldown for server info
-        self.botinfo_cooldown = 300  # 5 minutes cooldown for bot info
-        self.stats_cooldown = 900  # 15 minutes cooldown for stats
+        self.bot_admin_id = 1034845842709958786
         logging.info("Utility cog initialized")
+
+    def _is_bot_admin(self, user_id: int) -> bool:
+        """ตรวจสอบว่าเป็นแอดมินบอทหรือไม่"""
+        admin_cog = self.bot.get_cog('Admin')
+        if admin_cog:
+            if hasattr(admin_cog, 'is_admin'):
+                return admin_cog.is_admin(user_id)
+            if hasattr(admin_cog, 'allowed_user_id'):
+                return str(user_id) == str(admin_cog.allowed_user_id)
+        return user_id == self.bot_admin_id
+
+    async def _check_permission(self, interaction: discord.Interaction) -> bool:
+        """ตรวจสอบว่าผู้ใช้มีสิทธิ์ Administrator ในเซิร์ฟเวอร์ หรือเป็นแอดมินบอท"""
+        if interaction.user.guild_permissions.administrator or self._is_bot_admin(interaction.user.id):
+            return True
+        await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้ (ต้องการสิทธิ์ Administrator หรือแอดมินบอท)", ephemeral=True)
+        return False
 
     async def cog_load(self):
         """Called when the cog is loaded"""
@@ -80,8 +99,8 @@ class Utility(commands.Cog):
             latency = round(self.bot.latency * 1000)
             
             # Calculate API latency
-            start_time = time.time()
-            api_latency = round((time.time() - start_time) * 1000)
+            start_ts = datetime.now().timestamp()
+            api_latency = round((datetime.now().timestamp() - start_ts) * 1000)
             
             # Create embed with better formatting
             embed = discord.Embed(
@@ -117,238 +136,240 @@ class Utility(commands.Cog):
         except Exception as e:
             await self.cog_app_command_error(interaction, e)
 
-    @app_commands.command(name="ข้อมูลเซิร์ฟเวอร์", description="แสดงข้อมูลเกี่ยวกับเซิร์ฟเวอร์")
+    @app_commands.command(name="ข้อมูลเซิร์ฟเวอร์", description="แสดงข้อมูลเชิงลึกและสถิติของเซิร์ฟเวอร์")
     async def serverinfo(self, interaction: discord.Interaction):
-        """แสดงข้อมูลเกี่ยวกับเซิร์ฟเวอร์"""
-        try:
-            # Check cooldown
-            current_time = time.time()
-            if current_time - self.cooldowns[interaction.guild.id][interaction.user.id] < self.serverinfo_cooldown:
-                remaining = int(self.serverinfo_cooldown - (current_time - self.cooldowns[interaction.guild.id][interaction.user.id]))
-                minutes = remaining // 60
-                seconds = remaining % 60
-                await interaction.response.send_message(f"⏳ กรุณารออีก {minutes} นาที {seconds} วินาทีก่อนใช้คำสั่งนี้อีกครั้ง", ephemeral=True)
-                return
+        """แสดงข้อมูลเกี่ยวกับเซิร์ฟเวอร์แบบพรีเมียม"""
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ คำสั่งนี้ใช้ได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
 
-            if not interaction.guild:
-                await interaction.response.send_message("❌ คำสั่งนี้สามารถใช้ได้เฉพาะในเซิร์ฟเวอร์เท่านั้น", ephemeral=True)
-                return
+        guild = interaction.guild
+        await interaction.response.defer()
 
-            guild = interaction.guild
-            
-            # Create embed with server icon
-            embed = discord.Embed(
-                title=f"📊 ข้อมูลเซิร์ฟเวอร์: {guild.name}",
-                color=discord.Color.blue()
-            )
-            
-            # Add server icon if available
-            if guild.icon:
-                embed.set_thumbnail(url=guild.icon.url)
-            
-            # Basic Information
-            embed.add_field(
-                name="🆔 ID",
-                value=f"`{guild.id}`",
-                inline=True
-            )
-            
-            # Handle case where guild owner might be None
-            owner_info = "ไม่สามารถดึงข้อมูลได้"
-            if guild.owner:
-                owner_info = f"{guild.owner.mention} ({guild.owner.name})"
-            
-            embed.add_field(
-                name="👑 เจ้าของ",
-                value=owner_info,
-                inline=True
-            )
-            
-            # Format creation date
-            created_at = guild.created_at.strftime("%d/%m/%Y %H:%M:%S")
-            embed.add_field(
-                name="📅 สร้างเมื่อ",
-                value=f"`{created_at}`\n({humanize.naturaltime(guild.created_at)})",
-                inline=True
-            )
-            
-            # Member Information
-            total_members = guild.member_count
-            online_members = len([m for m in guild.members if m.status != discord.Status.offline])
-            
-            embed.add_field(
-                name="👥 สมาชิก",
-                value=f"ทั้งหมด: **{total_members}** คน\nออนไลน์: **{online_members}** คน",
-                inline=True
-            )
-            
-            # Channel Information
-            text_channels = len(guild.text_channels)
-            voice_channels = len(guild.voice_channels)
-            categories = len(guild.categories)
-            
-            embed.add_field(
-                name="📝 แชแนล",
-                value=f"ข้อความ: **{text_channels}**\nเสียง: **{voice_channels}**\nหมวดหมู่: **{categories}**",
-                inline=True
-            )
-            
-            # Role Information
-            roles = len(guild.roles)
-            embed.add_field(
-                name="🎭 ยศ",
-                value=f"ทั้งหมด: **{roles}** ยศ",
-                inline=True
-            )
-            
-            # Boost Information
-            if guild.premium_tier > 0:
-                embed.add_field(
-                    name="💎 บูสต์",
-                    value=f"จำนวน: **{guild.premium_subscription_count}** บูสต์\nเลเวล: **{guild.premium_tier}**",
-                    inline=True
-                )
-            
-            # Add footer with server ID
-            embed.set_footer(text=f"Server ID: {guild.id}")
-            
-            await interaction.response.send_message(embed=embed)
+        # คำนวณข้อมูลสมาชิก
+        total_members = guild.member_count
+        bots = sum(1 for m in guild.members if m.bot)
+        humans = total_members - bots
+        
+        # สถานะสมาชิก
+        online = len([m for m in guild.members if m.status == discord.Status.online])
+        idle = len([m for m in guild.members if m.status == discord.Status.idle])
+        dnd = len([m for m in guild.members if m.status == discord.Status.dnd])
+        
+        # วันที่สร้าง
+        created_time = discord.utils.format_dt(guild.created_at, 'F')
+        created_relative = discord.utils.format_dt(guild.created_at, 'R')
 
-            # Update cooldown after successful execution
-            self.cooldowns[interaction.guild.id][interaction.user.id] = current_time
-        except Exception as e:
-            await self.cog_app_command_error(interaction, e)
+        embed = discord.Embed(
+            title=f"🏰 {guild.name}",
+            description=f"```{guild.description or 'ไม่มีคำอธิบายเซิร์ฟเวอร์'}```",
+            color=discord.Color.from_rgb(0, 200, 255),
+            timestamp=datetime.now()
+        )
 
-    @app_commands.command(name="ข้อมูลผู้ใช้", description="แสดงข้อมูลเกี่ยวกับผู้ใช้")
+        if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+        if guild.banner: embed.set_image(url=guild.banner.url)
+
+        # ข้อมูลพื้นฐาน
+        embed.add_field(
+            name="📌 ข้อมูลทั่วไป",
+            value=f"**เจ้าของ:** {guild.owner.mention if guild.owner else 'ไม่ทราบ'}\n"
+                  f"**ID:** `{guild.id}`\n"
+                  f"**สร้างเมื่อ:** {created_time}\n({created_relative})",
+            inline=False
+        )
+
+        # สถิติสมาชิก
+        embed.add_field(
+            name="👥 สมาชิก",
+            value=f"**ทั้งหมด:** `{total_members}` คน\n"
+                  f"**คน:** `{humans}` | **บอท:** `{bots}`\n"
+                  f"**🟢:** `{online}` | **🟡:** `{idle}` | **🔴:** `{dnd}`",
+            inline=True
+        )
+
+        # สถิติช่อง
+        embed.add_field(
+            name="📝 ช่องการใช้งาน",
+            value=f"**หมวดหมู่:** `{len(guild.categories)}` ช่อง\n"
+                  f"**ข้อความ:** `{len(guild.text_channels)}` ช่อง\n"
+                  f"**เสียง:** `{len(guild.voice_channels)}` ช่อง",
+            inline=True
+        )
+
+        # ข้อมูลความปลอดภัยและการปรับแต่ง
+        features = ", ".join(guild.features).lower().replace("_", " ") if guild.features else "ไม่มี"
+        embed.add_field(
+            name="🔐 ความปลอดภัย & ฟีเจอร์",
+            value=f"**ระดับความปลอดภัย:** `{str(guild.verification_level).title()}`\n"
+                  f"**ฟิลเตอร์เนื้อหา:** `{str(guild.explicit_content_filter).title()}`\n"
+                  f"**ฟีเจอร์:** {features[:100]}...",
+            inline=False
+        )
+
+        # บูสต์และขีดจำกัด
+        embed.add_field(
+            name="💎 เซิร์ฟเวอร์บูสต์",
+            value=f"**จำนวน:** `{guild.premium_subscription_count}` บูสต์\n"
+                  f"**เลเวล:** `Level {guild.premium_tier}`\n"
+                  f"**อีโมจิ:** `{len(guild.emojis)}/{guild.emoji_limit}`",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎭 บทบาท",
+            value=f"**ทั้งหมด:** `{len(guild.roles)}` ยศ\n"
+                  f"**สูงสุด:** {guild.roles[-1].mention}",
+            inline=True
+        )
+
+        embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="ข้อมูลผู้ใช้", description="แสดงโปรไฟล์และข้อมูลเชิงลึกของผู้ใช้")
     @app_commands.describe(user="ผู้ใช้ที่ต้องการดูข้อมูล (ถ้าไม่ระบุจะแสดงข้อมูลของคุณ)")
-    async def userinfo(self, interaction: discord.Interaction, user: discord.User = None):
-        """แสดงข้อมูลเกี่ยวกับผู้ใช้"""
-        try:
-            # Check cooldown
-            current_time = time.time()
-            if current_time - self.cooldowns[interaction.guild.id][interaction.user.id] < self.userinfo_cooldown:
-                remaining = int(self.userinfo_cooldown - (current_time - self.cooldowns[interaction.guild.id][interaction.user.id]))
-                minutes = remaining // 60
-                seconds = remaining % 60
-                await interaction.response.send_message(f"⏳ กรุณารออีก {minutes} นาที {seconds} วินาทีก่อนใช้คำสั่งนี้อีกครั้ง", ephemeral=True)
-                return
+    async def userinfo(self, interaction: discord.Interaction, user: discord.Member = None):
+        """แสดงข้อมูลเกี่ยวกับผู้ใช้แบบพรีเมียม"""
+        target = user or interaction.user
+        await interaction.response.defer()
 
-            target = user or interaction.user
-            member = interaction.guild.get_member(target.id) if interaction.guild else None
-            
-            # Create embed with user's color
-            embed = discord.Embed(
-                title=f"👤 ข้อมูลผู้ใช้: {target.name}",
-                color=target.color if hasattr(target, 'color') else discord.Color.blue()
-            )
-            
-            # Add user avatar
-            if target.avatar:
-                embed.set_thumbnail(url=target.avatar.url)
-            
-            # Basic Information
-            embed.add_field(
-                name="🆔 ID",
-                value=f"`{target.id}`",
-                inline=True
-            )
-            
-            # Member Information
-            if member:
-                if member.nick:
-                    embed.add_field(
-                        name="📝 ชื่อเล่น",
-                        value=member.nick,
-                        inline=True
-                    )
-                
-                # Join date
-                if member.joined_at:
-                    joined_at = member.joined_at.strftime("%d/%m/%Y %H:%M:%S")
-                    embed.add_field(
-                        name="📅 เข้าร่วมเมื่อ",
-                        value=f"`{joined_at}`\n({humanize.naturaltime(member.joined_at)})",
-                        inline=True
-                    )
-                
-                # Roles
-                roles = [role.mention for role in member.roles[1:]]  # Exclude @everyone
-                if roles:
-                    roles_text = " ".join(roles) if len(roles) < 10 else f"{len(roles)} ยศ"
-                    embed.add_field(
-                        name=f"🎭 ยศ ({len(roles)})",
-                        value=roles_text,
-                        inline=False
-                    )
-            
-            # Account Creation
-            created_at = target.created_at.strftime("%d/%m/%Y %H:%M:%S")
-            embed.add_field(
-                name="📅 สร้างบัญชีเมื่อ",
-                value=f"`{created_at}`\n({humanize.naturaltime(target.created_at)})",
-                inline=True
-            )
-            
-            # Add footer with user ID
-            embed.set_footer(text=f"User ID: {target.id}")
-            
-            await interaction.response.send_message(embed=embed)
+        # สร้างวันที่
+        created_time = discord.utils.format_dt(target.created_at, 'F')
+        created_relative = discord.utils.format_dt(target.created_at, 'R')
+        joined_time = discord.utils.format_dt(target.joined_at, 'F') if target.joined_at else "ไม่ทราบ"
+        joined_relative = discord.utils.format_dt(target.joined_at, 'R') if target.joined_at else ""
 
-            # Update cooldown after successful execution
-            self.cooldowns[interaction.guild.id][interaction.user.id] = current_time
-        except Exception as e:
-            await self.cog_app_command_error(interaction, e)
+        # รวบรวมยศ
+        roles = [role.mention for role in reversed(target.roles[1:])] # เรียงจากสูงไปต่ำ ไม่รวม @everyone
+        roles_display = " ".join(roles[:15]) if roles else "ไม่มี"
+        if len(roles) > 15: roles_display += f" ...และอีก {len(roles)-15} ยศ"
 
-    @app_commands.command(name="ข้อมูลบอท", description="แสดงข้อมูลพื้นฐานของบอท")
+        # ธง/เครื่องหมาย (Flags)
+        flags = [f.replace("_", " ").title() for f, v in target.public_flags if v]
+        flags_text = ", ".join(flags) if flags else "ไม่มี"
+
+        embed = discord.Embed(
+            title=f"👤 {target.name}#{target.discriminator}",
+            color=target.color if target.color.value else discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        
+        embed.set_thumbnail(url=target.display_avatar.url)
+        if target.banner: embed.set_image(url=target.banner.url)
+
+        # สถานะและประเภทบัญชี
+        status_map = {
+            discord.Status.online: "🟢 ออนไลน์",
+            discord.Status.idle: "🟡 ไม่อยู่",
+            discord.Status.dnd: "🔴 ห้ามรบกวน",
+            discord.Status.offline: "⚫ ออฟไลน์"
+        }
+        account_type = "🤖 บอท" if target.bot else "👤 ผู้ใช้ทั่วไป"
+        
+        embed.add_field(
+            name="📌 ข้อมูลทั่วไป",
+            value=f"**ID:** `{target.id}`\n"
+                  f"**ประเภท:** {account_type}\n"
+                  f"**สถานะ:** {status_map.get(target.status, '⚫ ไม่พบข้อมูล')}\n"
+                  f"**เข็มกลัด:** {flags_text}",
+            inline=False
+        )
+
+        embed.add_field(
+            name="📅 ไทม์ไลน์",
+            value=f"**สร้างบัญชีเมื่อ:** {created_time}\n({created_relative})\n"
+                  f"**เข้าร่วมเซิร์ฟเวอร์:** {joined_time}\n({joined_relative})",
+            inline=False
+        )
+
+        embed.add_field(
+            name=f"🎭 บทบาท ({len(target.roles)-1})",
+            value=roles_display,
+            inline=False
+        )
+
+        # สิทธิ์สำคัญ
+        key_perms = []
+        if target.guild_permissions.administrator: key_perms.append("`Administrator`")
+        if target.guild_permissions.manage_guild: key_perms.append("`Manage Server`")
+        if target.guild_permissions.manage_roles: key_perms.append("`Manage Roles`")
+        if target.guild_permissions.manage_channels: key_perms.append("`Manage Channels`")
+        if target.guild_permissions.ban_members: key_perms.append("`Ban Members`")
+        
+        if key_perms:
+            embed.add_field(name="🔑 สิทธิ์สำคัญ", value=" · ".join(key_perms), inline=False)
+
+        embed.set_footer(text=f"User ID: {target.id}")
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="ข้อมูลบอท", description="แสดงประสิทธิภาพและสถิติเชิงลึกของบอท")
     async def show_bot_info(self, interaction: discord.Interaction):
-        try:
-            # Check if user has manage_messages permission instead of requiring admin
-            if not interaction.user.guild_permissions.manage_messages:
-                return await interaction.response.send_message("❌ คุณต้องมีสิทธิ์จัดการข้อความเพื่อใช้คำสั่งนี้", ephemeral=True)
+        """แสดงข้อมูลประสิทธิภาพระบบและบอทแบบพรีเมียม"""
+        await interaction.response.defer()
+        
+        # ปิงและสถิติพื้นฐาน
+        latency = round(self.bot.latency * 1000)
+        total_guilds = len(self.bot.guilds)
+        total_members = sum(g.member_count for g in self.bot.guilds)
+        total_commands = len(self.bot.tree.get_commands())
+        
+        # ระบบ Uptime
+        uptime_str = self.get_uptime()
+        
+        # ข้อมูลระบบ (Hardware)
+        cpu_usage = psutil.cpu_percent()
+        ram = psutil.virtual_memory()
+        ram_used = ram.used / (1024 ** 3)
+        ram_total = ram.total / (1024 ** 3)
+        
+        embed = discord.Embed(
+            title="🎮 Alpha Bot Performance Dashboard",
+            description="```ระบบกำลังทำงานอย่างเต็มประสิทธิภาพ 🟢```",
+            color=discord.Color.from_rgb(255, 100, 0),
+            timestamp=datetime.now()
+        )
 
-            # Get bot's latency
-            latency = round(self.bot.latency * 1000)
-            
-            # Get uptime
-            current_time = datetime.now(timezone.utc)
-            uptime = current_time - self.bot.start_time
-            days = uptime.days
-            hours = uptime.seconds // 3600
-            minutes = (uptime.seconds % 3600) // 60
-            seconds = uptime.seconds % 60
-            
-            # Create status embed
-            embed = discord.Embed(
-                title="🤖 ข้อมูลบอท",
-                color=discord.Color.blue(),
-                timestamp=datetime.now()
-            )
-            
-            # Add fields
-            embed.add_field(
-                name="⏱️ เวลาทำงาน",
-                value=f"{days} วัน {hours} ชั่วโมง {minutes} นาที {seconds} วินาที",
-                inline=False
-            )
-            embed.add_field(
-                name="📶 ปิง",
-                value=f"{latency}ms",
-                inline=True
-            )
-            embed.add_field(
-                name="👥 จำนวนเซิร์ฟเวอร์",
-                value=str(len(self.bot.guilds)),
-                inline=True
-            )
-            
-            # Add footer
-            embed.set_footer(text=f"Requested by {interaction.user.name}")
-            
-            await interaction.response.send_message(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error in show_bot_info command: {e}")
-            await interaction.response.send_message("❌ เกิดข้อผิดพลาดในการแสดงข้อมูลบอท", ephemeral=True)
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+
+        # Infrastructure
+        embed.add_field(
+            name="🚀 โครงสร้างพื้นฐาน",
+            value=f"**ความหน่วง:** `{latency}ms`\n"
+                  f"**เวลาทำงาน:** `{uptime_str}`\n"
+                  f"**Python:** `{platform.python_version()}`\n"
+                  f"**Discord.py:** `{discord.__version__}`",
+            inline=True
+        )
+
+        # Network Stats
+        embed.add_field(
+            name="📊 สถิติเครือข่าย",
+            value=f"**เซิร์ฟเวอร์:** `{total_guilds}` แห่ง\n"
+                  f"**สมาชิกทั้งหมด:** `{total_members:,}` คน\n"
+                  f"**คำสั่งทั้งหมด:** `{total_commands}` คำสั่ง",
+            inline=True
+        )
+
+        # Resource Usage
+        embed.add_field(
+            name="💻 ทรัพยากรเครื่อง",
+            value=f"**CPU Usage:** `{cpu_usage}%`\n"
+                  f"**RAM Usage:** `{ram.percent}%` ({ram_used:.2f}GB / {ram_total:.2f}GB)\n"
+                  f"**ระบบที่รัน:** `{platform.system()} {platform.release()}`",
+            inline=False
+        )
+
+        # New Features and Developer contact
+        embed.add_field(
+            name="🛠️ ทีมพัฒนา และ โปรเจกต์",
+            value="**ผู้พัฒนาหลัก:** `DeepMind Antigravity`\n"
+                  "**โปรเจกต์:** [GitHub Registry](https://github.com/ygygi67)\n"
+                  "**สถานะ:** `Development State (Experimental)`",
+            inline=False
+        )
+
+        embed.set_footer(text="✨ Powered by High-Performance Core", icon_url=self.bot.user.display_avatar.url)
+        
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="เชิญบอท", description="สร้างลิงก์เชิญบอท")
     async def invite(self, interaction: discord.Interaction):
@@ -469,18 +490,10 @@ class Utility(commands.Cog):
 
     @app_commands.command(name="คำสั่ง", description="แสดงรายการคำสั่งทั้งหมดที่บอทมีให้ใช้งาน")
     async def help(self, interaction: discord.Interaction):
-        """แสดงรายการคำสั่งทั้งหมดแบบอัตโนมัติแบ่งตามหมวดหมู่"""
+        """แสดงรายการคำสั่งทั้งหมดแบบอัตโนมัติแบ่งตามหมวดหมู่ (พร้อมระบบแบ่งหน้า)"""
         try:
-            # ใช้ defer เพราะถ้าคำสั่งเยอะ การสร้าง embed อาจใช้เวลาและอาจติด timeout ได้
             await interaction.response.defer(ephemeral=False)
             
-            embed = discord.Embed(
-                title="📚 รายการคำสั่งทั้งหมด",
-                description="นี่คือคำสั่งทั้งหมดที่ระบบมีให้บริการ คุณสามารถพิมพ์ `/` แล้วเลือกใช้คำสั่งได้เลยครับ:\n\n",
-                color=discord.Color.blue()
-            )
-            
-            # Dictionary map ของชื่อ Cog ภาษาอังกฤษเป็นไทยหรือชื่อที่ดูสวยงาม (ถ้าไม่มีใน map จะเอาชื่อเดิมแทน)
             cog_aliases = {
                 "Admin": "🛠️ การตั้งค่าแอดมิน",
                 "Moderation": "🛡️ การดูแลความเรียบร้อย",
@@ -491,65 +504,70 @@ class Utility(commands.Cog):
                 "Stats": "📊 สถิติในเซิร์ฟเวอร์",
                 "Status": "📡 สถานะและการทำงาน",
                 "Utility": "🔧 เครื่องมือทั่วไป",
-                "RoleSyncAndManage": "⚙️ การตั้งค่าและจัดสิทธิ์ยศ"
+                "RoleSyncAndManage": "⚙️ การตั้งค่าและจัดสิทธิ์ยศ",
+                "AIBot": "🤖 ระบบ AI และแชทบอท",
+                "Voice": "🎤 ระบบจัดการเสียง"
             }
 
-            field_count = 0
+            all_pages = []
+            all_commands_count = 0
             
+            # รวบรวมคำสั่งทั้งหมดแบ่งตาม Cog
+            all_cog_cmds = {}
             for cog_name, cog in self.bot.cogs.items():
-                if field_count >= 24: # Limit Discord embed field
-                    break
-                    
-                cog_commands = cog.get_app_commands()
-                if not cog_commands:
-                    continue
+                cmds = cog.get_app_commands()
+                if not cmds: continue
                 
                 cmd_list = []
-                for cmd in cog_commands:
-                    # กรองเฉพาะคำสั่งระดับบนสุด ไม่ใช่คำสั่งย่อย
-                    if isinstance(cmd, app_commands.Command) or isinstance(cmd, app_commands.Group):
-                        desc = cmd.description or "ไม่มีคำอธิบาย"
-                        # ถ้าคำอธิบายยาวเกินไปให้ตัดทอน
-                        if len(desc) > 50:
-                            desc = desc[:47] + "..."
-                        cmd_list.append(f"`/{cmd.name}` - {desc}")
+                for cmd in cmds:
+                    # เก็บทั้ง Command ธรรมดาและ Group
+                    all_commands_count += 1
+                    desc = cmd.description or "ไม่มีคำอธิบาย"
+                    if len(desc) > 60: desc = desc[:57] + "..."
+                    cmd_list.append(f"`/{cmd.name}` - {desc}")
                 
                 if cmd_list:
-                    # Field value max size is 1024
-                    val_text = "\n".join(cmd_list)
-                    if len(val_text) > 1024:
-                        val_text = val_text[:1020] + "..."
-                        
-                    display_name = cog_aliases.get(cog_name, f"📌 {cog_name}")    
-                    embed.add_field(
-                        name=display_name,
-                        value=val_text,
-                        inline=False
-                    )
-                    field_count += 1
+                    all_cog_cmds[cog_aliases.get(cog_name, f"📌 {cog_name}")] = cmd_list
+
+            # แบ่งเข้า Embed หน้าละ 5 Cog เพื่อไม่ให้ยาวเกินไป
+            cog_items = list(all_cog_cmds.items())
+            items_per_page = 4
             
-            if field_count == 0:
-                embed.description += "\n\n⚠️ ขณะนี้ยังไม่มีคำสั่งถูกลงทะเบียน หรือกำลังซิงค์อยู่ กรุณารอสักครู่..."
+            for i in range(0, len(cog_items), items_per_page):
+                page_items = cog_items[i:i+items_per_page]
+                embed = discord.Embed(
+                    title="📚 รายการคำสั่งของ Alpha Bot",
+                    description=f"นี่คือคำสั่งทั้งหมดที่ซิงค์แล้วจำนวน **{all_commands_count}** คำสั่ง\n\n",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now()
+                )
                 
-            embed.set_footer(text=f"บอท: {self.bot.user.name} | คำสั่งทั้งหมดจะแสดงเฉพาะสิทธิ์ที่คุณมี")
+                for group_name, cmds in page_items:
+                    val = "\n".join(cmds)
+                    if len(val) > 1000: val = val[:1000] + "\n..."
+                    embed.add_field(name=group_name, value=val, inline=False)
+                
+                embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+                embed.set_footer(text=f"หน้า {len(all_pages)+1}/{(len(cog_items)-1)//items_per_page + 1} | ใช้ปุ่มด้านล่างเพื่อเปลี่ยนหน้า")
+                all_pages.append(embed)
+
+            if not all_pages:
+                return await interaction.followup.send("❌ ขณะนี้ไม่พบคำสั่งที่ใช้งานได้")
+
+            view = MemberHelpView(all_pages, interaction.user.id)
+            await interaction.followup.send(embed=all_pages[0], view=view)
             
-            await interaction.followup.send(embed=embed)
-            
-        except discord.Forbidden:
-            pass  # ไม่สามารถส่งข้อความได้
         except Exception as e:
-            logger.error(f"Error in dynamic help command: {e}")
-            try:
-                await interaction.followup.send("❌ เกิดข้อผิดพลาดในการโหลดคำสั่ง กรุณาลองใหม่ในภายหลัง", ephemeral=True)
-            except:
-                pass
+            logger.error(f"Error in help command: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดภายใน: {e}", ephemeral=True)
+
 
     @app_commands.command(name="สถิติ", description="แสดงสถิติการใช้งานของบอทแบบเรียลไทม์")
     async def stats(self, interaction: discord.Interaction):
         """แสดงสถิติการใช้งานของบอทแบบเรียลไทม์"""
         try:
             # Check cooldown
-            current_time = time.time()
+            current_time = datetime.now().timestamp()
             if current_time - self.cooldowns[interaction.guild.id][interaction.user.id] < self.stats_cooldown:
                 remaining = int(self.stats_cooldown - (current_time - self.cooldowns[interaction.guild.id][interaction.user.id]))
                 minutes = remaining // 60
@@ -890,7 +908,7 @@ class Utility(commands.Cog):
             # Stop any existing public monitor for this user
             if interaction.user.id in self.public_monitors:
                 self.public_monitors[interaction.user.id].stopped = True
-                del self.public_monitors[interaction.user.id]
+                del self.public_monitors[interaction.user.id]   
 
             # Create initial embed
             embed = discord.Embed(
@@ -923,10 +941,12 @@ class Utility(commands.Cog):
                 if datetime.now() >= end_time:
                     embed = discord.Embed(
                         title="⏰ การติดตามสิ้นสุดลง",
-                        description="การติดตามระบบสิ้นสุดลงตามเวลาที่กำหนด (1 นาที)",
+                        description="การติดตามระบบสิ้นสุดลงตามเวลาที่กำหนด (1 นาที)\n\n"
+                                    "💡 **คุณสามารถใช้คำสั่ง `/ติดตาม` อีกรอบเพื่อเริ่มการติดตามใหม่ได้ครับ**",
                         color=discord.Color.blue()
                     )
                     await message.edit(embed=embed)
+                    view.stopped = True
                     break
                 
                 # Calculate elapsed time
@@ -1018,10 +1038,31 @@ class Utility(commands.Cog):
                 scopes=["bot", "applications.commands"]
             )
             # Get all synced commands
-            synced_commands = [f"/{cmd.name} - {cmd.description}" for cmd in self.bot.tree.get_commands()]
+            all_cmds = self.bot.tree.get_commands()
+            synced_commands = [f"/{cmd.name} - {cmd.description}" for cmd in all_cmds]
+            
+            # If user is bot admin, show secret commands
+            if self._is_bot_admin(interaction.user.id):
+                synced_commands.append("⚠️ **[Admin Only]** `!fullbackup` - สำรองข้อมูลทุกอย่างจากทุกเซิร์ฟเวอร์")
+                synced_commands.append("⚠️ **[Admin Only]** `!Copy_here` - จะก็อปเซิฟร์โดยให้ใส่ ID ของเซิฟร์นั้น ๆ")
+
+            # Limit description to avoid 400 Bad Request (Max 4096 chars)
+            # We will show first 20 commands to keep it clean and safe
+            display_cmds = synced_commands[:20]
+            remaining = len(synced_commands) - 20
+            
+            description_text = f"[คลิกที่นี่]({invite_url}) เพื่อเชิญบอทเข้าเซิร์ฟเวอร์ของคุณ\n\n**คำสั่งที่ซิงค์แล้ว ({len(synced_commands)}):**\n"
+            description_text += "\n".join(display_cmds)
+            if remaining > 0:
+                description_text += f"\n*...และอีก {remaining} คำสั่ง*"
+
+            # Safety check for the 4096 limit
+            if len(description_text) > 4000:
+                description_text = description_text[:3990] + "..."
+
             embed = discord.Embed(
                 title="🔗 เชิญบอท",
-                description=f"[คลิกที่นี่]({invite_url}) เพื่อเชิญบอทเข้าเซิร์ฟเวอร์ของคุณ\n\n**คำสั่งที่ซิงค์แล้ว:**\n" + "\n".join(synced_commands),
+                description=description_text,
                 color=discord.Color.green()
             )
             # Fallback for command name
@@ -1056,6 +1097,1050 @@ class Utility(commands.Cog):
             import traceback
             logger.error(f"Error in invite_bot: {e}\n{traceback.format_exc()}")
             await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {e}", ephemeral=True)
+
+    @app_commands.command(name="โหลดรูปทั้งเซิร์ฟ", description="ดาวน์โหลดรูปโปรไฟล์สมาชิก (Admin Only)")
+    @app_commands.describe(ขอบเขต="เลือกเซิร์ฟเวอร์ที่ต้องการโหลด (เฉพาะแอดมินบอทที่โหลดได้ทุกเซิร์ฟ)")
+    @app_commands.choices(ขอบเขต=[
+        app_commands.Choice(name="เฉพาะเซิร์ฟเวอร์นี้", value="current"),
+        app_commands.Choice(name="ทุกเซิร์ฟเวอร์ที่บอทอยู่ (เฉพาะแอดมินบอท)", value="all")
+    ])
+    async def download_all_avatars(self, interaction: discord.Interaction, ขอบเขต: str = "current"):
+        """ดาวน์โหลดรูปโปรไฟล์สมาชิก บีบเป็น Zip แล้วส่งไฟล์ให้"""
+        await interaction.response.defer(ephemeral=False)
+        
+        if not await self._check_permission(interaction):
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        if ขอบเขต == "all" and not is_bot_admin:
+            await interaction.followup.send("⚠️ คุณไม่ใช่แอดมินบอท ระบบจะดาวน์โหลดเฉพาะเซิร์ฟเวอร์นี้แทน", ephemeral=True)
+            ขอบเขต = "current"
+        
+        target_guilds = self.bot.guilds if ขอบเขต == "all" else [interaction.guild]
+        total_members_count = sum(len(g.members) for g in target_guilds)
+
+        try:
+            await interaction.edit_original_response(content=f"⏳ เริ่มเตรียมการดาวน์โหลดรูปโปรไฟล์จาก {len(target_guilds)} เซิร์ฟเวอร์ (รวมสมาชิกระมาณ {total_members_count} คน)...")
+        except: pass
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"avatars_{'all_servers' if ขอบเขต == 'all' else interaction.guild.id}_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                semaphore = asyncio.Semaphore(15)
+                
+                for guild in target_guilds:
+                    # สร้างโฟลเดอร์สำหรับเซิร์ฟเวอร์นี้
+                    guild_folder_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    guild_dir = os.path.join(temp_dir, f"{guild_folder_name}_{guild.id}")
+                    if not os.path.exists(guild_dir):
+                        os.makedirs(guild_dir)
+
+                    members_with_avatars = [m for m in guild.members if m.avatar or m.display_avatar]
+                    member_data_lines = []
+                    used_filenames = {}
+
+                    async def download_avatar(member: discord.Member, g_dir, data_lines, used_names):
+                        async with semaphore:
+                            try:
+                                url = member.display_avatar.url
+                                async with session.get(url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        clean_name = re.sub(r'[\\/*?:"<>|]', '', member.name) or "unknown"
+                                        
+                                        final_name = clean_name
+                                        count = 1
+                                        while final_name.lower() in used_names:
+                                            final_name = f"{clean_name}_{count}"
+                                            count += 1
+                                        used_names[final_name.lower()] = True
+                                        
+                                        filename = f"{final_name}.png"
+                                        filepath = os.path.join(g_dir, filename)
+                                        
+                                        with open(filepath, 'wb') as f:
+                                            f.write(content)
+                                        
+                                        data_lines.append(f"ชื่อ: {member.name} | ID: {member.id} | ไฟล์: {filename}")
+                            except Exception as e:
+                                logger.error(f"Failed to download avatar for {member.name} in {guild.name}: {e}")
+
+                    if members_with_avatars:
+                        tasks = [download_avatar(m, guild_dir, member_data_lines, used_filenames) for m in members_with_avatars]
+                        await asyncio.gather(*tasks)
+
+                        # สร้างไฟล์รายชื่อสมาชิกในโฟลเดอร์ของเซิร์ฟเวอร์นั้นๆ
+                        if member_data_lines:
+                            with open(os.path.join(guild_dir, "members_info.txt"), "w", encoding="utf-8") as f:
+                                f.write(f"ข้อมูลสมาชิกเซิร์ฟเวอร์: {guild.name} ({guild.id})\n")
+                                f.write("="*50 + f"\nรวมสมาชิกที่มีรูป: {len(members_with_avatars)}\n")
+                                f.write("\n".join(member_data_lines))
+
+            # บีบอัดไฟล์ลง Zip โดยรักษาโครงสร้างโฟลเดอร์
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        # ใช้ relative path ใน zip
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zipf.write(file_path, arcname)
+
+            # ตรวจสอบขนาดไฟล์
+            file_size = os.path.getsize(zip_path)
+            total_files = sum([len(files) for r, d, files in os.walk(temp_dir)])
+
+            if total_files == 0:
+                try: await interaction.edit_original_response(content="❌ ดาวน์โหลดรูปไม่สำเร็จเลยแม้แต่รูปเดียว")
+                except: pass
+                return
+
+            if file_size > 25 * 1024 * 1024:
+                export_dir = os.path.join(os.getcwd(), "exports")
+                if not os.path.exists(export_dir): os.makedirs(export_dir)
+                
+                final_path = os.path.join(export_dir, zip_name)
+                shutil.move(zip_path, final_path)
+                
+                try:
+                    await interaction.edit_original_response(content=
+                        f"⚠️ ไฟล์มีขนาดใหญ่เกินไป ({file_size / (1024*1024):.2f} MB) ไม่สามารถส่งผ่าน Discord ได้\n"
+                        f"✅ ดาวน์โหลดเรียบร้อย! ทั้งหมด {total_files} ไฟล์ จาก {len(target_guilds)} เซิร์ฟเวอร์\n"
+                        f"📂 บันทึกไว้ที่เครื่องแล้ว: `{final_path}`"
+                    )
+                except: pass
+            else:
+                file = discord.File(zip_path, filename=zip_name)
+                try: await interaction.edit_original_response(content=f"✅ ดาวน์โหลดเรียบร้อย! ทั้งหมด {total_files} ไฟล์ จาก {len(target_guilds)} เซิร์ฟเวอร์")
+                except: pass
+                await interaction.followup.send(file=file)
+
+        except Exception as e:
+            logger.error(f"Error in download_all_avatars: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+        
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+
+    @app_commands.command(name="โหลดอีโมจิทั้งเซิร์ฟ", description="ดาวน์โหลดอีโมจิสมาชิก (Admin Only)")
+    @app_commands.describe(ขอบเขต="เลือกเซิร์ฟเวอร์ที่ต้องการโหลด (เฉพาะแอดมินบอทที่โหลดได้ทุกเซิร์ฟ)")
+    @app_commands.choices(ขอบเขต=[
+        app_commands.Choice(name="เฉพาะเซิร์ฟเวอร์นี้", value="current"),
+        app_commands.Choice(name="ทุกเซิร์ฟเวอร์ที่บอทอยู่ (เฉพาะแอดมินบอท)", value="all")
+    ])
+    async def download_all_emojis(self, interaction: discord.Interaction, ขอบเขต: str = "current"):
+        """ดาวน์โหลดอีโมจิทั้งหมดในเซิร์ฟเวอร์ บีบเป็น Zip"""
+        await interaction.response.defer(ephemeral=False)
+        
+        if not await self._check_permission(interaction):
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        if ขอบเขต == "all" and not is_bot_admin:
+            await interaction.followup.send("⚠️ คุณไม่ใช่แอดมินบอท ระบบจะดาวน์โหลดเฉพาะเซิร์ฟเวอร์นี้แทน", ephemeral=True)
+            ขอบเขต = "current"
+        
+        target_guilds = self.bot.guilds if ขอบเขต == "all" else [interaction.guild]
+        total_emojis_count = sum(len(g.emojis) for g in target_guilds)
+
+        try:
+            await interaction.edit_original_response(content=f"⏳ เริ่มเตรียมการดาวน์โหลดอีโมจิจาก {len(target_guilds)} เซิร์ฟเวอร์ (รวมอีโมจิทั้งหมด {total_emojis_count} รูป)...")
+        except: pass
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"emojis_{'all_servers' if ขอบเขต == 'all' else interaction.guild.id}_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                semaphore = asyncio.Semaphore(10)
+                
+                for guild in target_guilds:
+                    emojis = guild.emojis
+                    if not emojis:
+                        continue
+
+                    # สร้างโฟลเดอร์สำหรับเซิร์ฟเวอร์นี้
+                    guild_folder_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    guild_dir = os.path.join(temp_dir, f"{guild_folder_name}_{guild.id}")
+                    if not os.path.exists(guild_dir):
+                        os.makedirs(guild_dir)
+
+                    async def download_emoji(emoji: discord.Emoji, g_dir):
+                        async with semaphore:
+                            try:
+                                ext = "gif" if emoji.animated else "png"
+                                async with session.get(emoji.url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        filename = f"{emoji.name}.{ext}"
+                                        with open(os.path.join(g_dir, filename), 'wb') as f:
+                                            f.write(content)
+                            except: pass
+
+                    await asyncio.gather(*[download_emoji(e, guild_dir) for e in emojis])
+
+            # บีบอัดไฟล์ลง Zip โดยรักษาโครงสร้างโฟลเดอร์
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zipf.write(file_path, arcname)
+
+            total_files = sum([len(files) for r, d, files in os.walk(temp_dir)])
+            if total_files == 0:
+                try: await interaction.edit_original_response(content="❌ ดาวน์โหลดไม่สำเร็จหรือไม่มีอีโมจิให้โหลด")
+                except: pass
+                return
+
+            file_size = os.path.getsize(zip_path)
+            if file_size > 25 * 1024 * 1024:
+                export_dir = os.path.join(os.getcwd(), "exports")
+                if not os.path.exists(export_dir): os.makedirs(export_dir)
+                final_path = os.path.join(export_dir, zip_name)
+                shutil.move(zip_path, final_path)
+                try: await interaction.edit_original_response(content=f"⚠️ ไฟล์มีขนาดใหญ่เกินไป ({file_size / (1024 * 1024):.2f} MB)\n📂 บันทึกไว้ที่เครื่องแล้ว: `{final_path}`")
+                except: pass
+            else:
+                try: await interaction.edit_original_response(content=f"✅ โหลดอีโมจิทั้งหมด {total_files} ไฟล์ จาก {len(target_guilds)} เซิร์ฟเวอร์เรียบร้อยแล้ว")
+                except: pass
+                await interaction.followup.send(file=discord.File(zip_path, filename=zip_name))
+
+        except Exception as e:
+            logger.error(f"Error in download_all_emojis: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path): os.remove(zip_path)
+
+    @app_commands.command(name="โหลดสติกเกอร์ทั้งเซิร์ฟ", description="ดาวน์โหลดสติกเกอร์สมาชิก (Admin Only)")
+    @app_commands.describe(ขอบเขต="เลือกเซิร์ฟเวอร์ที่ต้องการโหลด (เฉพาะแอดมินบอทที่โหลดได้ทุกเซิร์ฟ)")
+    @app_commands.choices(ขอบเขต=[
+        app_commands.Choice(name="เฉพาะเซิร์ฟเวอร์นี้", value="current"),
+        app_commands.Choice(name="ทุกเซิร์ฟเวอร์ที่บอทอยู่ (เฉพาะแอดมินบอท)", value="all")
+    ])
+    async def download_all_stickers(self, interaction: discord.Interaction, ขอบเขต: str = "current"):
+        """ดาวน์โหลดสติกเกอร์ทั้งหมดในเซิร์ฟเวอร์ บีบเป็น Zip"""
+        await interaction.response.defer(ephemeral=False)
+        
+        if not await self._check_permission(interaction):
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        if ขอบเขต == "all" and not is_bot_admin:
+            await interaction.followup.send("⚠️ คุณไม่ใช่แอดมินบอท ระบบจะดาวน์โหลดเฉพาะเซิร์ฟเวอร์นี้แทน", ephemeral=True)
+            ขอบเขต = "current"
+        target_guilds = self.bot.guilds if ขอบเขต == "all" else [interaction.guild]
+        total_stickers_count = sum(len(g.stickers) for g in target_guilds)
+
+        try:
+            await interaction.edit_original_response(content=f"⏳ เริ่มเตรียมการดาวน์โหลดสติกเกอร์จาก {len(target_guilds)} เซิร์ฟเวอร์ (รวมสติกเกอร์ทั้งหมด {total_stickers_count} รูป)...")
+        except: pass
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"stickers_{'all_servers' if ขอบเขต == 'all' else interaction.guild.id}_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                semaphore = asyncio.Semaphore(10)
+                
+                for guild in target_guilds:
+                    if not guild.stickers: continue
+
+                    guild_folder_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    guild_dir = os.path.join(temp_dir, f"{guild_folder_name}_{guild.id}")
+                    if not os.path.exists(guild_dir): os.makedirs(guild_dir)
+
+                    async def download_sticker(sticker: discord.StickerItem, g_dir):
+                        async with semaphore:
+                            try:
+                                # Determine extension based on format
+                                ext = "png"
+                                if sticker.format == discord.StickerFormatType.apng: ext = "png"
+                                elif sticker.format == discord.StickerFormatType.lottie: ext = "json"
+                                elif sticker.format == discord.StickerFormatType.gif: ext = "gif"
+                                
+                                async with session.get(sticker.url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        filename = f"{sticker.name}_{sticker.id}.{ext}"
+                                        with open(os.path.join(g_dir, filename), 'wb') as f:
+                                            f.write(content)
+                            except: pass
+
+                    await asyncio.gather(*[download_sticker(s, guild_dir) for s in guild.stickers])
+
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        # ใช้ relative path ใน zip
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zipf.write(file_path, arcname)
+
+            total_files = sum([len(files) for r, d, files in os.walk(temp_dir)])
+            if total_files == 0:
+                try: await interaction.edit_original_response(content="❌ ไม่พบสติกเกอร์ให้โหลด")
+                except: pass
+                return
+
+            file_size = os.path.getsize(zip_path)
+            if file_size > 25 * 1024 * 1024:
+                export_dir = os.path.join(os.getcwd(), "exports")
+                if not os.path.exists(export_dir): os.makedirs(export_dir)
+                final_path = os.path.join(export_dir, zip_name)
+                shutil.move(zip_path, final_path)
+                try: await interaction.edit_original_response(content=f"⚠️ ไฟล์มีขนาดใหญ่ ({file_size/(1024*1024):.2f}MB) 📂 บันทึกไว้ที่เครื่องแล้ว: `{final_path}`")
+                except: pass
+            else:
+                try: await interaction.edit_original_response(content=f"✅ โหลดสติกเกอร์ทั้งหมด {total_files} ไฟล์ เรียบร้อย")
+                except: pass
+                await interaction.followup.send(file=discord.File(zip_path, filename=zip_name))
+
+        except Exception as e:
+            logger.error(f"Error in download_all_stickers: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path): os.remove(zip_path)
+
+    @app_commands.command(name="ส่งออกรายชื่อสมาชิก", description="ส่งออกรายชื่อสมาชิกเป็นไฟล์ CSV (Admin Only)")
+    @app_commands.describe(ขอบเขต="เลือกเซิร์ฟเวอร์ที่ต้องการส่งออก (เฉพาะแอดมินบอทที่ส่งออกได้ทุกเซิร์ฟ)")
+    @app_commands.choices(ขอบเขต=[
+        app_commands.Choice(name="เฉพาะเซิร์ฟเวอร์นี้", value="current"),
+        app_commands.Choice(name="ทุกเซิร์ฟเวอร์ที่บอทอยู่ (เฉพาะแอดมินบอท)", value="all")
+    ])
+    async def export_member_list(self, interaction: discord.Interaction, ขอบเขต: str = "current"):
+        """ส่งออกรายชื่อสมาชิกทั้งหมดเป็นไฟล์ CSV"""
+        await interaction.response.defer(ephemeral=False)
+        
+        if not await self._check_permission(interaction):
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        if ขอบเขต == "all" and not is_bot_admin:
+            await interaction.followup.send("⚠️ คุณไม่ใช่แอดมินบอท ระบบจะส่งออกเฉพาะเซิร์ฟเวอร์นี้แทน", ephemeral=True)
+            ขอบเขต = "current"
+
+        target_guilds = self.bot.guilds if ขอบเขต == "all" else [interaction.guild]
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"members_export_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+
+        try:
+            # ใช้ executor สำหรับการเขียนไฟล์ CSV ใหญ่ๆ เพื่อไม่ให้บล็อค
+            def process_members():
+                for guild in target_guilds:
+                    guild_folder_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    csv_filename = f"{guild_folder_name}_{guild.id}.csv"
+                    csv_path = os.path.join(temp_dir, csv_filename)
+
+                    with open(csv_path, mode='w', encoding='utf-8-sig', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['User ID', 'Username', 'Nickname', 'Bot', 'Joined At', 'Created At', 'Top Role', 'All Roles'])
+                        
+                        for m in guild.members:
+                            roles = [r.name for r in m.roles[1:]]
+                            joined = m.joined_at.strftime("%Y-%m-%d %H:%M:%S") if m.joined_at else "N/A"
+                            created = m.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                            writer.writerow([
+                                m.id, m.name, m.nick or "", m.bot,
+                                joined, created, m.top_role.name, ", ".join(roles)
+                            ])
+
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for file in os.listdir(temp_dir):
+                        zipf.write(os.path.join(temp_dir, file), file)
+
+            await self.bot.loop.run_in_executor(None, process_members)
+
+            file = discord.File(zip_path, filename=zip_name)
+            await interaction.followup.send(f"✅ ส่งออกรายชื่อสมาชิกจาก {len(target_guilds)} เซิร์ฟเวอร์เรียบร้อยแล้ว", file=file)
+
+        except Exception as e:
+            logger.error(f"Error in export_member_list: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path): os.remove(zip_path)
+
+    @app_commands.command(name="สำรองข้อมูลโครงสร้างช่อง", description="สำรองข้อมูลหมวดหมู่และช่องทั้งหมด (Admin Only)")
+    @app_commands.describe(ขอบเขต="เลือกเซิร์ฟเวอร์ที่ต้องการสำรอง (เฉพาะแอดมินบอทที่ทำได้ทุกเซิร์ฟ)")
+    @app_commands.choices(ขอบเขต=[
+        app_commands.Choice(name="เฉพาะเซิร์ฟเวอร์นี้", value="current"),
+        app_commands.Choice(name="ทุกเซิร์ฟเวอร์ที่บอทอยู่ (เฉพาะแอดมินบอท)", value="all")
+    ])
+    async def backup_channels(self, interaction: discord.Interaction, ขอบเขต: str = "current"):
+        """บันทึกโครงสร้างหมวดหมู่และช่องทั้งหมด"""
+        await interaction.response.defer(ephemeral=False)
+        
+        if not await self._check_permission(interaction):
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        if ขอบเขต == "all" and not is_bot_admin:
+            await interaction.followup.send("⚠️ คุณไม่ใช่แอดมินบอท ระบบจะสำรองข้อมูลเฉพาะเซิร์ฟเวอร์นี้แทน", ephemeral=True)
+            ขอบเขต = "current"
+
+        target_guilds = self.bot.guilds if ขอบเขต == "all" else [interaction.guild]
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"channels_backup_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+
+        try:
+            def process_backup():
+                for guild in target_guilds:
+                    guild_folder_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    backup_path = os.path.join(temp_dir, f"{guild_folder_name}_{guild.id}.txt")
+
+                    with open(backup_path, "w", encoding="utf-8") as f:
+                        f.write(f"ช่องและหมวดหมู่ของเซิร์ฟเวอร์: {guild.name} ({guild.id})\n")
+                        f.write("="*50 + "\n\n")
+                        
+                        for category in guild.categories:
+                            f.write(f"📁 [หมวดหมู่] {category.name}\n")
+                            for channel in category.channels:
+                                ctype = "📝" if isinstance(channel, discord.TextChannel) else "🔊" if isinstance(channel, discord.VoiceChannel) else "📍"
+                                f.write(f"   {ctype} {channel.name} (ID: {channel.id})\n")
+                            f.write("\n")
+                        
+                        orphan_channels = [c for c in guild.channels if c.category is None]
+                        if orphan_channels:
+                            f.write("🏷️ [ไม่มีหมวดหมู่]\n")
+                            for channel in orphan_channels:
+                                ctype = "📝" if isinstance(channel, discord.TextChannel) else "🔊" if isinstance(channel, discord.VoiceChannel) else "📍"
+                                f.write(f"   {ctype} {channel.name} (ID: {channel.id})\n")
+
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for file in os.listdir(temp_dir):
+                        zipf.write(os.path.join(temp_dir, file), file)
+
+            await self.bot.loop.run_in_executor(None, process_backup)
+            await interaction.followup.send(f"✅ สำรองข้อมูลโครงสร้างช่องจาก {len(target_guilds)} เซิร์ฟเวอร์เรียบร้อยแล้ว", file=discord.File(zip_path, filename=zip_name))
+
+        except Exception as e:
+            logger.error(f"Error in backup_channels: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path): os.remove(zip_path)
+
+    @app_commands.command(name="โหลดแบนเนอร์และไอคอน", description="ดาวน์โหลดแบนเนอร์และไอคอนของเซิร์ฟเวอร์ (Admin Only)")
+    @app_commands.describe(ขอบเขต="เลือกเซิร์ฟเวอร์ที่ต้องการโหลด (เฉพาะแอดมินบอทที่โหลดได้ทุกเซิร์ฟ)")
+    @app_commands.choices(ขอบเขต=[
+        app_commands.Choice(name="เฉพาะเซิร์ฟเวอร์นี้", value="current"),
+        app_commands.Choice(name="ทุกเซิร์ฟเวอร์ที่บอทอยู่ (เฉพาะแอดมินบอท)", value="all")
+    ])
+    async def download_server_assets(self, interaction: discord.Interaction, ขอบเขต: str = "current"):
+        """ดาวน์โหลด Icon, Banner, Splash ของเซิร์ฟเวอร์"""
+        await interaction.response.defer(ephemeral=False)
+        
+        if not await self._check_permission(interaction):
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        if ขอบเขต == "all" and not is_bot_admin:
+            await interaction.followup.send("⚠️ คุณไม่ใช่แอดมินบอท ระบบจะดาวน์โหลดเฉพาะเซิร์ฟเวอร์นี้แทน", ephemeral=True)
+            ขอบเขต = "current"
+
+        target_guilds = self.bot.guilds if ขอบเขต == "all" else [interaction.guild]
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"server_assets_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                for guild in target_guilds:
+                    guild_folder_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    guild_dir = os.path.join(temp_dir, f"{guild_folder_name}_{guild.id}")
+                    if not os.path.exists(guild_dir): os.makedirs(guild_dir)
+
+                    assets = {
+                        "icon": guild.icon,
+                        "banner": guild.banner,
+                        "splash": guild.splash,
+                        "discovery_splash": guild.discovery_splash
+                    }
+
+                    for name, asset in assets.items():
+                        if asset:
+                            try:
+                                url = asset.url
+                                async with session.get(url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        ext = "gif" if asset.is_animated() else "png"
+                                        with open(os.path.join(guild_dir, f"{name}.{ext}"), "wb") as f:
+                                            f.write(content)
+                            except: pass
+
+            def zip_assets():
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, temp_dir)
+                            zipf.write(file_path, arcname)
+            
+            await self.bot.loop.run_in_executor(None, zip_assets)
+
+            await interaction.followup.send(f"✅ ดาวน์โหลดข้อมูล Banner/Icon จาก {len(target_guilds)} เซิร์ฟเวอร์เรียบร้อยแล้ว", file=discord.File(zip_path, filename=zip_name))
+
+        except Exception as e:
+            logger.error(f"Error in download_server_assets: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path): os.remove(zip_path)
+
+    @commands.command(name="fullbackup", hidden=True)
+    async def secret_full_backup(self, ctx):
+        """[Secret] ดาวน์โหลดและสำรองข้อมูลทุกอย่างจาก 'ทุกเซิร์ฟเวอร์' ที่บอทอยู่"""
+        if not self._is_bot_admin(ctx.author.id):
+            return # ทำงานเงียบๆ ถ้าไม่ใช่แอดมินบอท
+
+        status_msg = await ctx.send(f"⏳ **[Secret Mode]** เริ่มดำเนินการสำรองข้อมูลทุกอย่างจากเซิร์ฟเวอร์ทั้งหมด {len(self.bot.guilds)} แห่ง... (อาจใช้เวลานานมาก)")
+        
+        temp_dir = tempfile.mkdtemp()
+        zip_name = f"full_sync_backup_{int(datetime.now().timestamp())}.zip"
+        zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+        
+        target_guilds = self.bot.guilds
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                semaphore = asyncio.Semaphore(15) # กันโดนแบนจาก Discord
+                
+                for idx, guild in enumerate(target_guilds):
+                    # อัปเดตสถานะในช่องแชทเป็นระยะ
+                    if idx % 5 == 0:
+                        try:
+                            await status_msg.edit(content=f"⏳ กำลังดำเนินการ... ({idx}/{len(target_guilds)}) เซิร์ฟเวอร์: `{guild.name}`")
+                        except: pass
+                    
+                    # สร้างโฟลเดอร์สำหรับเซิร์ฟเวอร์นี้
+                    safe_guild_name = re.sub(r'[\\/*?:"<>|]', '', guild.name) or str(guild.id)
+                    guild_root = os.path.join(temp_dir, f"{safe_guild_name}_{guild.id}")
+                    subfolders = ["avatars", "emojis", "stickers", "assets", "data"]
+                    for folder in subfolders:
+                        os.makedirs(os.path.join(guild_root, folder), exist_ok=True)
+
+                    # 1. Avatars & Member Data
+                    members_with_avatars = [m for m in guild.members if m.avatar or m.display_avatar]
+                    member_data_lines = []
+                    
+                    async def download_avatar(member: discord.Member, g_dir, data_lines):
+                        async with semaphore:
+                            try:
+                                url = member.display_avatar.url
+                                async with session.get(url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        # Clean name for filesystem safety
+                                        name_safe = re.sub(r'[\\/*?:"<>|]', '', member.name) or "unknown"
+                                        filename = f"{name_safe}_{member.id}.png"
+                                        with open(os.path.join(g_dir, filename), 'wb') as f:
+                                            f.write(content)
+                                        data_lines.append(f"ชื่อ: {member.name} | ID: {member.id}")
+                            except: pass
+
+                    tasks = [download_avatar(m, os.path.join(guild_root, "avatars"), member_data_lines) for m in members_with_avatars]
+                    await asyncio.gather(*tasks)
+                    
+                    # 2. Emojis
+                    async def download_emoji(emoji: discord.Emoji, g_dir):
+                        async with semaphore:
+                            try:
+                                ext = "gif" if emoji.animated else "png"
+                                async with session.get(emoji.url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        with open(os.path.join(g_dir, f"{emoji.name}_{emoji.id}.{ext}"), 'wb') as f:
+                                            f.write(content)
+                            except: pass
+
+                    await asyncio.gather(*[download_emoji(e, os.path.join(guild_root, "emojis")) for e in guild.emojis])
+
+                    # 3. Stickers
+                    async def download_sticker(sticker: discord.StickerItem, g_dir):
+                        async with semaphore:
+                            try:
+                                ext = "png"
+                                if sticker.format == discord.StickerFormatType.lottie: ext = "json"
+                                async with session.get(sticker.url) as resp:
+                                    if resp.status == 200:
+                                        content = await resp.read()
+                                        with open(os.path.join(g_dir, f"{sticker.name}_{sticker.id}.{ext}"), 'wb') as f:
+                                            f.write(content)
+                            except: pass
+
+                    await asyncio.gather(*[download_sticker(s, os.path.join(guild_root, "stickers")) for s in guild.stickers])
+
+                    # 4. Member List (CSV)
+                    csv_path = os.path.join(guild_root, "data", "members.csv")
+                    with open(csv_path, mode='w', encoding='utf-8-sig', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['ID', 'Name', 'Nickname', 'Bot', 'Joined', 'Top Role'])
+                        for m in guild.members:
+                            writer.writerow([m.id, m.name, m.nick or "", m.bot, str(m.joined_at), m.top_role.name])
+
+                    # 5. Channel Structure
+                    with open(os.path.join(guild_root, "data", "channels.txt"), "w", encoding="utf-8") as f:
+                        for category in guild.categories:
+                            f.write(f"📁 {category.name}\n")
+                            for channel in category.channels: f.write(f"   - {channel.name}\n")
+
+                    # 6. Server Assets
+                    assets = {"icon": guild.icon, "banner": guild.banner, "splash": guild.splash}
+                    for name_asset, asset in assets.items():
+                        if asset:
+                            try:
+                                async with session.get(asset.url) as resp:
+                                    if resp.status == 200:
+                                        ext = "gif" if asset.is_animated() else "png"
+                                        with open(os.path.join(guild_root, "assets", f"{name_asset}.{ext}"), "wb") as f:
+                                            f.write(await resp.read())
+                            except: pass
+
+            # Zip and send
+            await status_msg.edit(content="📦 กำลังบีบอัดไฟล์ทั้งหมด... (ขั้นตอนนี้อาจช้าตามจำนวนข้อมูล)")
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        fp = os.path.join(root, file)
+                        zipf.write(fp, os.path.relpath(fp, temp_dir))
+
+            file_size = os.path.getsize(zip_path)
+            if file_size > 25 * 1024 * 1024:
+                export_dir = os.path.join(os.getcwd(), "exports")
+                if not os.path.exists(export_dir): os.makedirs(export_dir)
+                final_path = os.path.join(export_dir, zip_name)
+                shutil.move(zip_path, final_path)
+                await status_msg.edit(content=f"✅ **สำรองข้อมูลเสร็จสิ้น!**\n📦 ขนาด: `{file_size/(1024*1024):.2f} MB` (ใหญ่เกินส่งผ่าน Discord)\n📂 บันทึกไว้ที่: `{final_path}`")
+            else:
+                await status_msg.edit(content=f"✅ **สำรองข้อมูลเสร็จสิ้น!** ทั้งหมด {len(target_guilds)} เซิร์ฟเวอร์")
+                await ctx.send(file=discord.File(zip_path, filename=zip_name))
+
+        except Exception as e:
+            logger.error(f"Error in secret_full_backup: {e}\n{traceback.format_exc()}")
+            await ctx.send(f"❌ เกิดข้อผิดพลาดร้ายแรง: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            if os.path.exists(zip_path): 
+                try: os.remove(zip_path)
+                except: pass
+
+    async def _upload_to_catbox(self, filepath: str, filename: str) -> str | None:
+        """อัพโหลดไฟล์ไปยัง catbox.moe (ฟรี ไม่ต้องสมัคร รองรับถึง 200 MB)
+        คืนค่า URL ถ้าสำเร็จ หรือ None ถ้าล้มเหลว"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                with open(filepath, 'rb') as f:
+                    form = aiohttp.FormData()
+                    form.add_field('reqtype', 'fileupload')
+                    form.add_field('userhash', '')  # anonymous upload
+                    form.add_field('fileToUpload', f, filename=filename)
+                    async with session.post(
+                        'https://catbox.moe/user/api.php',
+                        data=form,
+                        timeout=aiohttp.ClientTimeout(total=300)
+                    ) as resp:
+                        if resp.status == 200:
+                            result = (await resp.text()).strip()
+                            if result.startswith('https://'):
+                                return result
+                        logger.warning(f"Catbox upload failed: HTTP {resp.status}")
+        except Exception as e:
+            logger.warning(f"Catbox upload error: {e}")
+        return None
+
+    @app_commands.command(name="โหลดคลิป", description="ดาวน์โหลดคลิปจาก URL (YouTube, TikTok, Facebook, ฯลฯ)")
+    @app_commands.describe(url="ลิงก์คลิปที่ต้องการโหลด", mode="รูปแบบไฟล์ (MP4 หรือ MP3)")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="วิดีโอ (MP4)", value="mp4"),
+        app_commands.Choice(name="เสียง (MP3)", value="mp3")
+    ])
+    async def download_clip(self, interaction: discord.Interaction, url: str, mode: str = "mp4"):
+        """ดาวน์โหลดวิดีโอหรือเสียงจากลิงก์ต่างๆ"""
+        await interaction.response.defer(ephemeral=False)
+        
+        # กรอง URL เบื้องต้น
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return await interaction.followup.send("❌ รูปแบบ URL ไม่ถูกต้อง กรุณาใส่ลิงก์ที่ขึ้นต้นด้วย http:// หรือ https://", ephemeral=True)
+
+        status_msg = await interaction.followup.send(f"⏳ กำลังตรวจสอบและเตรียมดาวน์โหลดจาก {url}...")
+        
+        temp_dir = tempfile.mkdtemp()
+
+        # ============================================================
+        # TikTok Photo/Slideshow handler
+        # yt-dlp ไม่รองรับ URL ที่มี /photo/ (โพสต์รูปภาพสไลด์โชว์)
+        # ============================================================
+        is_tiktok_photo = bool(re.search(r'tiktok\.com/.+/photo/', url))
+        if is_tiktok_photo:
+            try:
+                await interaction.edit_original_response(content="🖼️ ตรวจพบ TikTok Photo/Slideshow กำลังดาวน์โหลดรูปภาพ...")
+                
+                # ดึง video/photo ID จาก URL
+                photo_id_match = re.search(r'/photo/(\d+)', url)
+                if not photo_id_match:
+                    return await interaction.edit_original_response(content="❌ ไม่สามารถดึง Photo ID จาก URL ได้")
+                photo_id = photo_id_match.group(1)
+                
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.tiktok.com/',
+                }
+                
+                # ใช้ TikTok API endpoint สำหรับดึงข้อมูลโพสต์
+                api_url = f"https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/feed/?aweme_id={photo_id}&version_name=26.1.3&version_code=260103&build_number=26.1.3&manifest_version_code=260103"
+                
+                image_urls = []
+                title = f"tiktok_photo_{photo_id}"
+                
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json(content_type=None)
+                                aweme_list = data.get('aweme_list', [])
+                                if aweme_list:
+                                    aweme = aweme_list[0]
+                                    title = aweme.get('desc', title) or title
+                                    image_post = aweme.get('image_post_info', {})
+                                    images = image_post.get('images', [])
+                                    for img in images:
+                                        display_list = img.get('display_image', {}).get('url_list', [])
+                                        if display_list:
+                                            image_urls.append(display_list[0])
+                    except Exception as api_err:
+                        logger.warning(f"TikTok API failed: {api_err}")
+
+                    # Fallback: ลอง scrape หน้าเว็บถ้า API ไม่ได้
+                    if not image_urls:
+                        try:
+                            scrape_headers = {**headers, 'Accept-Language': 'th-TH,th;q=0.9,en;q=0.8'}
+                            async with session.get(url, headers=scrape_headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                                html = await resp.text()
+                                # ค้นหา image URLs ใน JSON-LD หรือ meta tags
+                                found = re.findall(r'"(https://p[0-9]-sign\.tiktokcdn[^"]+\.webp[^"]*|https://p[0-9]-sign\.tiktokcdn[^"]+\.jpeg[^"]*|https://p[0-9]\.tiktokcdn[^"]+\.webp[^"]*|https://p[0-9]\.tiktokcdn[^"]+\.jpeg[^"]*)', html)
+                                # deduplicate
+                                seen = set()
+                                for img_url in found:
+                                    base = img_url.split('?')[0]
+                                    if base not in seen:
+                                        seen.add(base)
+                                        image_urls.append(img_url)
+                        except Exception as scrape_err:
+                            logger.warning(f"TikTok scrape fallback failed: {scrape_err}")
+
+                    if not image_urls:
+                        return await interaction.edit_original_response(
+                            content="❌ ไม่สามารถดึงรูปภาพจาก TikTok Slideshow นี้ได้\n"
+                                    "💡 TikTok อาจบล็อกการเข้าถึง ลองคัดลอกรูปภาพด้วยตนเองหรือใช้ Browser แทน"
+                        )
+
+                    await interaction.edit_original_response(content=f"🖼️ พบ {len(image_urls)} รูป กำลังดาวน์โหลด...")
+
+                    # ดาวน์โหลดรูปทั้งหมด
+                    downloaded = []
+                    for idx, img_url in enumerate(image_urls, 1):
+                        try:
+                            async with session.get(img_url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                                if resp.status == 200:
+                                    content_bytes = await resp.read()
+                                    # ตรวจ content-type เพื่อเลือก extension
+                                    ctype = resp.content_type or ''
+                                    ext = 'jpg'
+                                    if 'webp' in ctype: ext = 'webp'
+                                    elif 'png' in ctype: ext = 'png'
+                                    img_path = os.path.join(temp_dir, f"image_{idx:03d}.{ext}")
+                                    with open(img_path, 'wb') as f:
+                                        f.write(content_bytes)
+                                    downloaded.append(img_path)
+                        except Exception as dl_err:
+                            logger.warning(f"Failed to download image {idx}: {dl_err}")
+
+                if not downloaded:
+                    return await interaction.edit_original_response(
+                        content="❌ ดาวน์โหลดรูปภาพไม่สำเร็จเลยแม้แต่รูปเดียว"
+                    )
+
+                # บีบอัดไฟล์เป็น ZIP
+                safe_title = re.sub(r'[\\/*?:"<>|]', '', title)[:50]
+                zip_name = f"tiktok_photos_{photo_id}.zip"
+                zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for img_path in downloaded:
+                        zipf.write(img_path, os.path.basename(img_path))
+
+                zip_size = os.path.getsize(zip_path)
+
+                # คำนวณ limit ของเซิร์ฟเวอร์
+                guild = interaction.guild
+                if guild:
+                    if guild.premium_tier >= 3: upload_limit = 100 * 1024 * 1024
+                    elif guild.premium_tier == 2: upload_limit = 50 * 1024 * 1024
+                    else: upload_limit = 8 * 1024 * 1024
+                else:
+                    upload_limit = 8 * 1024 * 1024
+
+                async def _send_or_upload_zip(zip_path_: str, zip_name_: str, count: int):
+                    """ลองส่งใน Discord ถ้าใหญ่เกิน/ล้มเหลว → อัพ catbox → fallback local"""
+                    if zip_size > upload_limit:
+                        # ใหญ่เกิน → ลอง catbox ก่อน
+                        await interaction.edit_original_response(content=f"☁️ ไฟล์ใหญ่เกิน limit ({zip_size/(1024*1024):.1f} MB) กำลังอัพโหลดขึ้น catbox.moe...")
+                        link = await self._upload_to_catbox(zip_path_, zip_name_)
+                        if link:
+                            await interaction.edit_original_response(
+                                content=f"✅ โหลด {count} รูปสำเร็จ — ไฟล์ใหญ่เกิน Discord limit\n"
+                                        f"🖼️ **TikTok Slideshow** — `{title}`\n"
+                                        f"📦 {count} รูป ({zip_size/(1024*1024):.1f} MB)\n"
+                                        f"🔗 ดาวน์โหลด: {link}"
+                            )
+                        else:
+                            export_dir = os.path.join(os.getcwd(), "exports")
+                            os.makedirs(export_dir, exist_ok=True)
+                            final_path_ = os.path.join(export_dir, zip_name_)
+                            shutil.move(zip_path_, final_path_)
+                            await interaction.edit_original_response(
+                                content=f"⚠️ ไม่สามารถอัพโหลดขึ้น catbox ได้\n📂 บันทึกไว้ที่เครื่องบอท: `{final_path_}`"
+                            )
+                    else:
+                        await interaction.edit_original_response(content=f"✅ โหลด {count} รูปสำเร็จ กำลังส่ง...")
+                        try:
+                            await interaction.followup.send(
+                                content=f"🖼️ **TikTok Slideshow** — `{title}`\n📦 {count} รูป",
+                                file=discord.File(zip_path_, filename=zip_name_)
+                            )
+                            await interaction.edit_original_response(content=f"✅ ส่ง {count} รูปจาก TikTok Slideshow เรียบร้อย")
+                        except discord.HTTPException:
+                            # Discord ปฏิเสธ → ลอง catbox
+                            await interaction.edit_original_response(content="☁️ Discord ปฏิเสธไฟล์ กำลังอัพโหลดขึ้น catbox.moe...")
+                            link = await self._upload_to_catbox(zip_path_, zip_name_)
+                            if link:
+                                await interaction.edit_original_response(
+                                    content=f"✅ โหลด {count} รูปสำเร็จ\n"
+                                            f"🖼️ **TikTok Slideshow** — `{title}`\n"
+                                            f"🔗 ดาวน์โหลด: {link}"
+                                )
+                            else:
+                                export_dir = os.path.join(os.getcwd(), "exports")
+                                os.makedirs(export_dir, exist_ok=True)
+                                final_path_ = os.path.join(export_dir, zip_name_)
+                                shutil.move(zip_path_, final_path_)
+                                await interaction.edit_original_response(
+                                    content=f"⚠️ อัพโหลดไม่สำเร็จ\n📂 บันทึกไว้ที่เครื่องบอท: `{final_path_}`"
+                                )
+                        finally:
+                            if os.path.exists(zip_path_):
+                                try: os.remove(zip_path_)
+                                except: pass
+
+                await _send_or_upload_zip(zip_path, zip_name, len(downloaded))
+
+            except Exception as photo_err:
+                logger.error(f"Error in TikTok photo download: {photo_err}\n{traceback.format_exc()}")
+                await interaction.edit_original_response(content=f"❌ เกิดข้อผิดพลาดในการโหลด TikTok Slideshow: {photo_err}")
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            return  # จบ flow TikTok photo ที่นี่
+        # ============================================================
+        
+        try:
+            audio_only = (mode == "mp3")
+            
+            # ตั้งค่า yt-dlp
+            ydl_opts = {
+                'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+                'quiet': True,
+                'no_warnings': True,
+                'no_check_certificate': True,
+                'ignoreerrors': False,
+            }
+            
+            if audio_only:
+                ydl_opts.update({
+                    'format': 'bestaudio/best',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                })
+            else:
+                ydl_opts.update({
+                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best',
+                    'merge_output_format': 'mp4',
+                })
+
+            # รัน yt-dlp ใน thread แยกเพื่อไม่ให้บล็อกบอท
+            def run_ytdl():
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    if audio_only:
+                        filename = os.path.splitext(filename)[0] + '.mp3'
+                    return filename, info
+
+            # ทำงานดาวน์โหลด
+            try:
+                loop = asyncio.get_event_loop()
+                filename, info = await loop.run_in_executor(None, run_ytdl)
+            except Exception as e:
+                err_str = str(e)
+                # ตรวจสอบ error message ที่รู้จัก
+                if 'Unsupported URL' in err_str:
+                    return await interaction.edit_original_response(
+                        content=f"❌ **URL นี้ไม่รองรับ**\n"
+                                f"อาจเป็น: รูปภาพ, Slideshow, หรือลิงก์ที่ yt-dlp ยังไม่รองรับ\n"
+                                f"`{err_str[:200]}`"
+                    )
+                return await interaction.edit_original_response(content=f"❌ เกิดข้อผิดพลาดในการโหลด: {err_str[:300]}")
+
+            if not os.path.exists(filename) or os.path.getsize(filename) == 0:
+                 return await interaction.edit_original_response(content="❌ ไม่สามารถดาวน์โหลดไฟล์ได้ หรือไฟล์ที่โหลดมาว่างเปล่า")
+
+            file_size = os.path.getsize(filename)
+            title = info.get('title', 'Unknown Title')
+            
+            # คำนวณ limit ที่แท้จริงของ Discord ตาม Boost Level ของเซิร์ฟเวอร์
+            # Level 0-1: 8 MB, Level 2: 50 MB, Level 3: 100 MB
+            guild = interaction.guild
+            if guild:
+                if guild.premium_tier >= 3:
+                    upload_limit = 100 * 1024 * 1024
+                elif guild.premium_tier == 2:
+                    upload_limit = 50 * 1024 * 1024
+                else:
+                    upload_limit = 8 * 1024 * 1024
+            else:
+                upload_limit = 8 * 1024 * 1024  # DM fallback
+
+            limit_mb = upload_limit / (1024 * 1024)
+
+            def _save_locally_clip(src_filename):
+                export_dir = os.path.join(os.getcwd(), "exports")
+                os.makedirs(export_dir, exist_ok=True)
+                safe_title = re.sub(r'[\\/*?:"<>|]', '', title)
+                ext = 'mp3' if audio_only else 'mp4'
+                new_filename = f"clip_{int(datetime.now().timestamp())}_{safe_title[:60]}.{ext}"
+                final_path = os.path.join(export_dir, new_filename)
+                shutil.move(src_filename, final_path)
+                return final_path
+
+            async def _send_or_upload_clip(src_filename):
+                """ลองส่งใน Discord ถ้าใหญ่เกิน/ล้มเหลว → อัพ catbox → fallback local"""
+                nonlocal filename
+                base_name = os.path.basename(src_filename)
+
+                if file_size > upload_limit:
+                    # ใหญ่เกิน Discord limit ตั้งแต่แรก → catbox
+                    await interaction.edit_original_response(
+                        content=f"☁️ ไฟล์ใหญ่เกิน {limit_mb:.0f} MB ({file_size/(1024*1024):.1f} MB) กำลังอัพโหลดขึ้น catbox.moe..."
+                    )
+                    link = await self._upload_to_catbox(src_filename, base_name)
+                    if link:
+                        await interaction.edit_original_response(content=
+                            f"✅ **ดาวน์โหลดสำเร็จ!**\n"
+                            f"🎬 หัวข้อ: `{title}`\n"
+                            f"📦 ขนาด: `{file_size / (1024*1024):.2f} MB`\n"
+                            f"🔗 ดาวน์โหลด: {link}"
+                        )
+                    else:
+                        final_path = _save_locally_clip(src_filename)
+                        await interaction.edit_original_response(content=
+                            f"⚠️ อัพโหลดขึ้น catbox ไม่สำเร็จ\n"
+                            f"🎬 หัวข้อ: `{title}`\n"
+                            f"📦 ขนาด: `{file_size / (1024*1024):.2f} MB`\n"
+                            f"📂 บันทึกไว้ที่เครื่องบอท: `{final_path}`"
+                        )
+                else:
+                    # ขนาดปกติ → ลองส่ง Discord ก่อน
+                    await interaction.edit_original_response(
+                        content=f"✅ **ดาวน์โหลดสำเร็จ:** `{title}`\n📦 ขนาด: `{file_size / (1024*1024):.2f} MB` กำลังอัพโหลด..."
+                    )
+                    try:
+                        await interaction.followup.send(file=discord.File(src_filename))
+                        try:
+                            await interaction.edit_original_response(content=f"✅ **ดาวน์โหลดสำเร็จ:** `{title}` (ส่งไฟล์แล้ว)")
+                        except: pass
+                    except discord.HTTPException as upload_err:
+                        # Discord ปฏิเสธ → catbox
+                        logger.warning(f"Discord rejected file ({upload_err}), trying catbox...")
+                        await interaction.edit_original_response(content="☁️ Discord ปฏิเสธไฟล์ กำลังอัพโหลดขึ้น catbox.moe...")
+                        link = await self._upload_to_catbox(src_filename, base_name)
+                        if link:
+                            await interaction.edit_original_response(content=
+                                f"✅ **ดาวน์โหลดสำเร็จ!**\n"
+                                f"🎬 หัวข้อ: `{title}`\n"
+                                f"📦 ขนาด: `{file_size / (1024*1024):.2f} MB`\n"
+                                f"🔗 ดาวน์โหลด: {link}"
+                            )
+                        else:
+                            final_path = _save_locally_clip(src_filename)
+                            await interaction.edit_original_response(content=
+                                f"⚠️ ส่งผ่าน Discord และ catbox ไม่สำเร็จ\n"
+                                f"🎬 หัวข้อ: `{title}`\n"
+                                f"📦 ขนาด: `{file_size / (1024*1024):.2f} MB`\n"
+                                f"📂 บันทึกไว้ที่เครื่องบอท: `{final_path}`"
+                            )
+
+            await _send_or_upload_clip(filename)
+
+        except Exception as e:
+            logger.error(f"Error in download_clip: {e}\n{traceback.format_exc()}")
+            await interaction.edit_original_response(content=f"❌ เกิดข้อผิดพลาดร้ายแรง: {e}")
+        
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+
+class MemberHelpView(discord.ui.View):
+    """View สำหรับหน้า Help แบบเปลี่ยนหน้าได้"""
+
+    def __init__(self, pages, user_id):
+        super().__init__(timeout=120)
+        self.pages = pages
+        self.user_id = user_id
+        self.current_page = 0
+
+    async def update_view(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+
+    @discord.ui.button(label="⬅️ ย้อนกลับ", style=discord.ButtonStyle.gray)
+    async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ คุณไม่ใช่เจ้าของคำสั่งนี้", ephemeral=True)
+        self.current_page = (self.current_page - 1) % len(self.pages)
+        await self.update_view(interaction)
+
+    @discord.ui.button(label="➡ ถัดไป", style=discord.ButtonStyle.gray)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ คุณไม่ใช่เจ้าของคำสั่งนี้", ephemeral=True)
+        self.current_page = (self.current_page + 1) % len(self.pages)
+        await self.update_view(interaction)
+
+    @discord.ui.button(label="🗑️ ปิด", style=discord.ButtonStyle.red)
+    async def close_view(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ คุณไม่ใช่เจ้าของคำสั่งนี้", ephemeral=True)
+        await interaction.message.delete()
+        self.stop()
+
 
 async def setup(bot):
     """Add the cog to the bot"""

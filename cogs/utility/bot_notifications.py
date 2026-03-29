@@ -66,10 +66,11 @@ class BotNotifications(commands.Cog):
         # 2. ตรวจสอบสิทธิ์ Administrator
         if not guild.me.guild_permissions.administrator:
             warning_msg = (
-                f"⚠️ **คำเตือน: สิทธิ์ของบอทไม่ครบถ้วน**\n"
-                f"บอทเข้าสู่เซิร์ฟเวอร์ **{guild.name}** แต่ไม่มีสิทธิ์ **Administrator**\n"
-                f"กรุณาให้สิทธิ์นี้แก่บอทเพื่อให้ระบบต่าง ๆ เช่น การบันทึกเสียงและแจ้งเตือนทำงานได้อย่างสมบูรณ์ครับ"
+                f"⚠️ **แจ้งเตือน: สิทธิ์การใช้งานไม่ครบถ้วน**\n"
+                f"บอทเข้าสู่เซิร์ฟเวอร์ **{guild.name}** เรียบร้อยแล้ว! แต่ตอนนี้ยังขาดสิทธิ์ **Administrator** ครับ\n"
+                f"เพื่อให้ระบบต่างๆ (เช่น การเล่นเพลง) ทำงานได้ลื่นไหล รบกวนช่วยมอบสิทธิ์นี้ให้บอทหน่อยนะครับ!"
             )
+
             
             # แจ้งเตือนคนเชิญ
             target_to_notify = inviter or guild.owner
@@ -107,14 +108,54 @@ class BotNotifications(commands.Cog):
     async def on_ready(self):
         """เมื่อบอทพร้อมทำงาน"""
         channel = await self.get_notification_channel()
-        if channel:
-            embed = discord.Embed(
-                title="🚀 บอทออนไลน์แล้ว",
-                description=f"ระบบพร้อมทำงานใน {len(self.bot.guilds)} เซิร์ฟเวอร์",
-                color=discord.Color.blue(),
-                timestamp=self._now()
-            )
-            await channel.send(embed=embed)
+        if not channel:
+            return
+
+        # คำนวณจำนวนคำสั่งทั้งหมด
+        all_commands = self.bot.tree.get_commands()
+        total_cmds = len(all_commands)
+        
+        # แยกหมวดหมู่คำสั่งเด่นๆ
+        featured_cmds = ["`/เล่น`", "`/พูดตาม`", "`/เชิญบอทเต็ม`", "`/สถานะ`", "`/ความหน่วง`"]
+        new_features = [
+            "🔍 `/ค้นหาเพื่อนร่วมกลุ่ม` - ค้นหาคนในกลุ่มร่วมกันและวาดแผนผัง",
+            "📻 `Auto Play` - ระบบเล่นเพลงอัตโนมัติเมื่อคิวหมด",
+            "🛡️ `Persistent Admins` - ระบบจดจำแอดมินบอทถาวร"
+        ]
+
+        embed = discord.Embed(
+            title="🚀 SYSTEM ONLINE & OPERATIONAL",
+            description=f"```🤖 บอทออนไลน์แล้วใน {len(self.bot.guilds)} เซิร์ฟเวอร์```",
+            color=discord.Color.from_rgb(0, 221, 255),
+            timestamp=self._now()
+        )
+
+        embed.add_field(
+            name="📊 สรุปภาพรวม",
+            value=f"```🌐 {len(self.bot.guilds)} เซิร์ฟเวอร์\n📡 {total_cmds} คำสั่งพร้อมใช้งาน\n🟢 สถานะ: พร้อมรบ 100%```",
+            inline=False
+        )
+
+        embed.add_field(
+            name="✨ คำสั่งที่แนะนำ",
+            value=" · ".join(featured_cmds),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🆕 มีอะไรใหม่?",
+            value="\n".join(new_features),
+            inline=False
+        )
+
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+        
+        embed.set_footer(
+            text=f"Alpha Bot System | Total {total_cmds} Commands Loaded",
+            icon_url=self.bot.user.display_avatar.url
+        )
+
+        await channel.send(embed=embed)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(BotNotifications(bot))

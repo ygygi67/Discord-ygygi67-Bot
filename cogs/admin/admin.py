@@ -71,33 +71,45 @@ class Admin(commands.Cog):
         self.stress_task = None
         self.stress_active = False
         self.stress_level = 0
-        self.load_channels()
+        self.stress_start_time = None
+        self.diagnostic_results = []
+        self.admin_config_path = "data/admin_config.json"
+        self.load_admin_config()
         logger.info("Admin cog initialized")
 
-    def load_channels(self):
-        """Load saved channel IDs from config file"""
+    def load_admin_config(self):
+        """Load admin users and status channel from config file"""
         try:
-            if os.path.exists("channels.json"):
+            if os.path.exists(self.admin_config_path):
+                with open(self.admin_config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                    self.admin_users = set(config.get("admin_users", []))
+                    status_id = config.get("status_channel")
+                    if status_id:
+                        self.status_channel = self.bot.get_channel(status_id)
+            elif os.path.exists("channels.json"): # Backward compatibility
                 with open("channels.json", "r") as f:
                     config = json.load(f)
-                    if "status_channel" in config:
-                        self.status_channel = self.bot.get_channel(config["status_channel"])
-                        logger.info(f"Loaded status channel: {self.status_channel}")
+                    status_id = config.get("status_channel")
+                    if status_id:
+                        self.status_channel = self.bot.get_channel(status_id)
         except Exception as e:
-            logger.error(f"Error loading channels: {e}")
+            logger.error(f"Error loading admin config: {e}")
 
-    def save_channels(self):
-        """Save channel IDs to config file"""
+    def save_admin_config(self):
+        """Save admin users and status channel to config file"""
         try:
-            config = {}
-            if self.status_channel:
-                config["status_channel"] = self.status_channel.id
-            
-            with open("channels.json", "w") as f:
-                json.dump(config, f)
-            logger.info("Saved channel configuration")
+            if not os.path.exists("data"):
+                os.makedirs("data")
+            config = {
+                "admin_users": list(self.admin_users),
+                "status_channel": self.status_channel.id if self.status_channel else None
+            }
+            with open(self.admin_config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4)
+            logger.info("Saved admin configuration")
         except Exception as e:
-            logger.error(f"Error saving channels: {e}")
+            logger.error(f"Error saving admin config: {e}")
 
     async def cog_load(self):
         """Initialize status update task when cog is loaded"""
@@ -239,6 +251,18 @@ class Admin(commands.Cog):
         """Check if user is an admin"""
         return str(user_id) == self.allowed_user_id or str(user_id) in self.admin_users
 
+    def is_server_admin_or_bot_admin(self, interaction: discord.Interaction) -> bool:
+        """Check if user is a bot admin or server admin"""
+        if self.is_admin(interaction.user.id):
+            return True
+        if interaction.guild:
+            admin_role = discord.utils.get(interaction.guild.roles, name="Server Admin")
+            if admin_role and admin_role in getattr(interaction.user, 'roles', []):
+                return True
+            if getattr(interaction.user, 'guild_permissions', None) and interaction.user.guild_permissions.administrator:
+                return True
+        return False
+
     @app_commands.command(name="ตรวจสอบสิทธิ์", description="ตรวจสอบสิทธิ์แอดมินของคุณ")
     async def check_permissions(self, interaction: discord.Interaction):
         """ตรวจสอบสิทธิ์ของผู้ใช้"""
@@ -269,60 +293,6 @@ class Admin(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="รีโหลด", description="รีโหลดคำสั่งทั้งหมดของบอท")
-    async def reload(self, interaction: discord.Interaction):
-        """รีโหลด cog ทั้งหมด"""
-        if not self.is_admin(interaction.user.id):
-            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
-            return
-            
-        try:
-            # Defer the response since reloading might take time
-            await interaction.response.defer(ephemeral=True)
-            
-            # Track which cogs were reloaded
-            reloaded_cogs = []
-            failed_cogs = []
-            
-            # Reload each cog
-            for cog in list(self.bot.extensions):
-                try:
-                    await self.bot.reload_extension(cog)
-                    reloaded_cogs.append(cog)
-                except Exception as e:
-                    failed_cogs.append((cog, str(e)))
-                    logger.error(f"Failed to reload cog {cog}: {e}")
-            
-            # Create response message
-            if failed_cogs:
-                error_msg = "\n".join([f"- {cog}: {error}" for cog, error in failed_cogs])
-                await interaction.followup.send(
-                    f"⚠️ รีโหลดบางส่วนไม่สำเร็จ:\n{error_msg}",
-                    ephemeral=True
-                )
-            else:
-                await interaction.followup.send(
-                    f"✅ รีโหลดคำสั่งทั้งหมด {len(reloaded_cogs)} คำสั่งเรียบร้อยแล้ว",
-                    ephemeral=True
-                )
-                
-            logger.info(f"Reloaded {len(reloaded_cogs)} cogs by {interaction.user.name}")
-            
-        except Exception as e:
-            logger.error(f"Error in reload command: {e}")
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        f"❌ เกิดข้อผิดพลาดในการรีโหลด: {str(e)}",
-                        ephemeral=True
-                    )
-                else:
-                    await interaction.followup.send(
-                        f"❌ เกิดข้อผิดพลาดในการรีโหลด: {str(e)}",
-                        ephemeral=True
-                    )
-            except Exception as followup_error:
-                logger.error(f"Error sending error message: {followup_error}")
 
     @app_commands.command(name="หยุดบอท", description="หยุดการทำงานของบอท")
     async def shutdown(self, interaction: discord.Interaction):
@@ -514,6 +484,7 @@ class Admin(commands.Cog):
             return
 
         self.admin_users.add(user_id)
+        self.save_admin_config()
         logger.info(f"Added {user.name} (ID: {user_id}) as admin by {interaction.user.name}")
         await interaction.response.send_message(f"✅ เพิ่ม {user.mention} เป็นแอดมินเรียบร้อยแล้ว")
 
@@ -535,6 +506,7 @@ class Admin(commands.Cog):
             return
 
         self.admin_users.remove(user_id)
+        self.save_admin_config()
         logger.info(f"Removed {user.name} (ID: {user_id}) from admins by {interaction.user.name}")
         await interaction.response.send_message(f"✅ ลบ {user.mention} ออกจากการเป็นแอดมินแล้ว")
 
@@ -757,7 +729,7 @@ class Admin(commands.Cog):
             self.status_message = message
             
             # Save channel ID
-            self.save_channels()
+            self.save_admin_config()
             
             await interaction.response.send_message(
                 f"✅ ตั้งค่าช่องแสดงสถานะที่ {channel.mention} เรียบร้อยแล้ว",
@@ -1003,91 +975,174 @@ class Admin(commands.Cog):
             logger.error(f"Error in sync command: {e}")
             await interaction.followup.send("❌ เกิดข้อผิดพลาดในการซิงค์คำสั่ง", ephemeral=True)
 
+    def _run_stress_calc(self, level):
+        """Heavy CPU work to be run in a thread"""
+        try:
+            # Matrix multiplication for CPU stress
+            size = 500 * level 
+            matrix1 = [[i + j for j in range(size)] for i in range(size)]
+            matrix2 = [[i * j for j in range(size)] for i in range(size)]
+            result = [[sum(a * b for a, b in zip(row, col)) for col in zip(*matrix2)] for row in matrix1]
+            
+            # Prime number calculation for additional stress
+            for i in range(500 * level):
+                num = i * 1000
+                is_prime = True
+                for j in range(2, int(num ** 0.5) + 1):
+                    if num % j == 0:
+                        is_prime = False
+                        break
+            return True
+        except Exception as e:
+            logger.error(f"Error in stress calc thread: {e}")
+            return False
+
     async def stress_cpu(self):
-        """Background task to stress CPU"""
+        """Background task to stress CPU safely by using a separate thread"""
         while self.stress_active:
             try:
-                # Matrix multiplication for CPU stress
-                size = 1000 * self.stress_level
-                matrix1 = [[i + j for j in range(size)] for i in range(size)]
-                matrix2 = [[i * j for j in range(size)] for i in range(size)]
-                result = [[sum(a * b for a, b in zip(row, col)) for col in zip(*matrix2)] for row in matrix1]
+                # Run heavy work in a thread to keep event loop responsive
+                await asyncio.to_thread(self._run_stress_calc, self.stress_level)
                 
-                # Prime number calculation for additional stress
-                for i in range(1000 * self.stress_level):
-                    num = i * 1000
-                    is_prime = True
-                    for j in range(2, int(num ** 0.5) + 1):
-                        if num % j == 0:
-                            is_prime = False
-                            break
-                
-                # Small delay to prevent 100% CPU usage
-                await asyncio.sleep(0.1)
+                # Delay to prevent 100% CPU usage and allow other tasks
+                await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Error in stress task: {e}")
                 await asyncio.sleep(1)
 
-    @app_commands.command(name="ทดสอบซีพียู", description="ทดสอบประสิทธิภาพซีพียู")
-    @app_commands.describe(level="ระดับการทดสอบ (1-10)")
-    async def stress_test(self, interaction: discord.Interaction, level: int = 5):
-        """เริ่มการทดสอบซีพียู"""
+    def _calculate_score(self, avg_cpu, memory_mb, iterations):
+        """Calculate a performance score based on benchmark data"""
+        # Logic: More iterations is better, higher CPU is expected during benchmark
+        base_score = iterations / 100
+        cpu_bonus = avg_cpu * 2
+        mem_penalty = max(0, memory_mb - 500) # Penalty for leaking?
+        final_score = int(base_score + cpu_bonus - mem_penalty)
+        
+        if final_score > 5000: grade = "S (ยอดเยี่ยม)"
+        elif final_score > 3500: grade = "A (ดีมาก)"
+        elif final_score > 2000: grade = "B (ปกติ)"
+        elif final_score > 1000: grade = "C (พอใช้)"
+        else: grade = "D (ต้องการการอัปเกรด)"
+        
+        return final_score, grade
+
+    def _get_progress_bar(self, current, total, length=15):
+        percent = current / total
+        filled = int(length * percent)
+        return "▰" * filled + "▱" * (length - filled)
+
+    @app_commands.command(name="วินิจฉัยระบบ", description="วิเคราะห์และทดสอบประสิทธิภาพบอทแบบละเอียด")
+    @app_commands.describe(seconds="ระยะเวลาในการรันการตรวจสอบ (5-60 วินาที)")
+    async def system_diagnostics(self, interaction: discord.Interaction, seconds: int = 15):
+        """รันการตรวจสอบระบบแบบละเอียด"""
         if not self.is_admin(interaction.user.id):
             await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
             return
 
-        try:
-            # Validate stress level
-            if level < 1 or level > 10:
-                await interaction.response.send_message("❌ ระดับการทดสอบต้องอยู่ระหว่าง 1-10", ephemeral=True)
-                return
+        if seconds < 5 or seconds > 60:
+            return await interaction.response.send_message("❌ ระยะเวลาต้องอยู่ระหว่าง 5 ถึง 60 วินาที", ephemeral=True)
 
-            # Update stress level
-            self.stress_level = level
+        if self.stress_active:
+            return await interaction.response.send_message("⚠️ กำลังรันการตรวจสอบระบบอยู่แล้วในขณะนี้", ephemeral=True)
+
+        try:
+            await interaction.response.defer(ephemeral=True)
             
-            if not self.stress_active:
-                # Start stress task
-                self.stress_active = True
-                self.stress_task = self.bot.loop.create_task(self.stress_cpu())
-                await interaction.response.send_message(
-                    f"✅ เริ่มการทดสอบซีพียูที่ระดับ {level}/10\n"
-                    f"ใช้คำสั่ง `/หยุดทดสอบ` เพื่อหยุดการทดสอบ",
-                    ephemeral=True
+            self.stress_active = True
+            self.stress_level = 5 # Default level for diagnostics
+            self.stress_start_time = datetime.now()
+            iters = 0
+            
+            # Start background stress task
+            self.stress_task = self.bot.loop.create_task(self.stress_cpu())
+            
+            embed = discord.Embed(
+                title="🔍 กำลังรันการวินิจฉัยระบบ...",
+                description="บอทกำลังทำการทดสอบโหลด CPU และตรวจสอบค่าสถิติต่างๆ",
+                color=discord.Color.blue()
+            )
+            
+            msg = await interaction.followup.send(embed=embed)
+            
+            # Monitoring loop
+            cpu_samples = []
+            for i in range(seconds):
+                if not self.stress_active: break
+                
+                # Get current stats
+                process = psutil.Process()
+                curr_cpu = psutil.cpu_percent()
+                cpu_samples.append(curr_cpu)
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                latency = round(self.bot.latency * 1000)
+                
+                prog = self._get_progress_bar(i + 1, seconds)
+                embed.description = (
+                    f"**สถานะการตรวจสอบ:** `{prog}` ({i+1}/{seconds}s)\n\n"
+                    f"**ประสิทธิภาพปัจจุบัน:**\n"
+                    f"🖥️ CPU Usage: `{curr_cpu}%` (System)\n"
+                    f"💾 Memory: `{memory_mb:.1f} MB` (Process)\n"
+                    f"📡 Latency: `{latency}ms` (Discord API)\n"
+                    f"⚙️ Level: `{self.stress_level}/10`"
                 )
-            else:
-                # Update existing stress task
-                await interaction.response.send_message(
-                    f"✅ ปรับระดับการทดสอบซีพียูเป็น {level}/10",
-                    ephemeral=True
-                )
+                
+                await interaction.edit_original_response(embed=embed)
+                await asyncio.sleep(1)
+                iters += 10 # Simulated work tracking
+
+            # Wrap up
+            self.stress_active = False
+            if self.stress_task:
+                self.stress_task.cancel()
+
+            avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0
+            score, grade = self._calculate_score(avg_cpu, memory_mb, iters * 100)
+            
+            # final report
+            report_embed = discord.Embed(
+                title="✅ ผลการวินิจฉัยระบบเสร็จสิ้น",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            report_embed.description = f"บอททำงานบนสภาพแวดล้อมที่ **{grade}**"
+            
+            report_embed.add_field(name="📊 คะแนนรวม", value=f"**{score:,}**", inline=True)
+            report_embed.add_field(name="🏆 เกรด", value=f"**{grade}**", inline=True)
+            report_embed.add_field(name="🕒 ระยะเวลาที่ทดสอบ", value=f"`{seconds} วินาที`", inline=True)
+            
+            report_embed.add_field(
+                name="💻 สรุป CPU & RAM", 
+                value=f"ค่าเฉลี่ย CPU: `{avg_cpu:.1f}%`\nการจอง RAM สูงสุด: `{memory_mb:.1f} MB`", 
+                inline=False
+            )
+            
+            report_embed.add_field(
+                name="🌐 สรุปการเชื่อมต่อ", 
+                value=f"ความหน่วงเฉลี่ย: `{latency}ms` (Discord)", 
+                inline=False
+            )
+            
+            report_embed.set_footer(text=f"วินิจฉัยโดย: {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+            
+            await interaction.edit_original_response(embed=report_embed)
 
         except Exception as e:
-            logger.error(f"Error in stress test command: {e}")
-            await interaction.response.send_message("❌ เกิดข้อผิดพลาดในการเริ่มการทดสอบ", ephemeral=True)
+            self.stress_active = False
+            logger.error(f"Error in diagnostics: {e}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดในการวินิจฉัย: {e}", ephemeral=True)
 
-    @app_commands.command(name="หยุดทดสอบ", description="หยุดการทดสอบซีพียู")
-    async def stop_stress_test(self, interaction: discord.Interaction):
-        """หยุดการทดสอบซีพียู"""
+    @app_commands.command(name="หยุดวินิจฉัย", description="หยุดการตรวจสอบระบบที่กำลังรันอยู่")
+    async def stop_diagnostics(self, interaction: discord.Interaction):
+        """หยุดการตรวจสอบระบบ"""
         if not self.is_admin(interaction.user.id):
-            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
-            return
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
 
-        try:
-            if self.stress_active:
-                self.stress_active = False
-                if self.stress_task:
-                    self.stress_task.cancel()
-                    try:
-                        await self.stress_task
-                    except asyncio.CancelledError:
-                        pass
-                await interaction.response.send_message("✅ หยุดการทดสอบซีพียูเรียบร้อยแล้ว", ephemeral=True)
-            else:
-                await interaction.response.send_message("❌ ไม่มีการทดสอบซีพียูที่กำลังทำงานอยู่", ephemeral=True)
-
-        except Exception as e:
-            logger.error(f"Error in stop stress test command: {e}")
-            await interaction.response.send_message("❌ เกิดข้อผิดพลาดในการหยุดการทดสอบ", ephemeral=True)
+        if self.stress_active:
+            self.stress_active = False
+            if self.stress_task: self.stress_task.cancel()
+            await interaction.response.send_message("🛑 สั่งหยุดการวินิจฉัยระบบเรียบร้อยแล้ว", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ ไม่มีการวินิจฉัยที่กำลังรันอยู่", ephemeral=True)
 
     @app_commands.command(name="สร้างลิงก์เชิญ", description="สร้างลิงก์เชิญสำหรับเซิร์ฟเวอร์")
     @app_commands.describe(
@@ -1305,8 +1360,8 @@ class Admin(commands.Cog):
     )
     async def broadcast_dm(self, interaction: discord.Interaction, หัวข้อ: str, เนื้อหา: str, รูปภาพ: str = None, ข้ามเซิร์ฟ: bool = False, ยศ: Optional[discord.Role] = None):
         """ส่ง DM ประกาศหาทุกคนในเซิร์ฟเวอร์แบบมืออาชีพ"""
-        if not self.is_admin(interaction.user.id):
-            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้ (ต้องเป็นแอดมินเซิร์ฟเวอร์หรือแอดมินบอท)", ephemeral=True)
 
         # Only bot owner can cross-server broadcast
         is_bot_owner = str(interaction.user.id) == self.allowed_user_id
@@ -1444,8 +1499,8 @@ class Admin(commands.Cog):
     @app_commands.describe(หัวข้อ="หัวข้อประกาศ", เนื้อหา="เนื้อหาประกาศ", รูปภาพ="ลิงก์รูปภาพ (ไม่จำเป็น)")
     async def test_broadcast_dm(self, interaction: discord.Interaction, หัวข้อ: str, เนื้อหา: str, รูปภาพ: str = None):
         """ส่งตัวอย่างประกาศหาตัวเอง"""
-        if not self.is_admin(interaction.user.id):
-            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้ (ต้องเป็นแอดมินเซิร์ฟเวอร์หรือแอดมินบอท)", ephemeral=True)
             
         try:
             embed = discord.Embed(
@@ -1471,8 +1526,8 @@ class Admin(commands.Cog):
     @app_commands.describe(ช่อง="ช่องที่ต้องการประกาศ", หัวข้อ="หัวข้อ", เนื้อหา="เนื้อหา", รูปภาพ="ลิงก์รูปภาพ")
     async def broadcast_channel(self, interaction: discord.Interaction, ช่อง: discord.TextChannel, หัวข้อ: str, เนื้อหา: str, รูปภาพ: str = None):
         """ประกาศในช่องแชทแบบสวยงาม"""
-        if not self.is_admin(interaction.user.id):
-            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้ (ต้องเป็นแอดมินเซิร์ฟเวอร์หรือแอดมินบอท)", ephemeral=True)
 
         embed = discord.Embed(
             title=f"📣 {หัวข้อ}",
@@ -1507,8 +1562,8 @@ class Admin(commands.Cog):
         รูปภาพ: str = None
     ):
         """ส่ง DM หาสมาชิกเฉพาะคนที่เลือก"""
-        if not self.is_admin(interaction.user.id):
-            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้ (ต้องเป็นแอดมินเซิร์ฟเวอร์หรือแอดมินบอท)", ephemeral=True)
         
         await interaction.response.defer(ephemeral=True)
         
@@ -1583,8 +1638,8 @@ class Admin(commands.Cog):
         รูปภาพ: str = None
     ):
         """ส่ง DM หาสมาชิกหลายคนพร้อมกัน"""
-        if not self.is_admin(interaction.user.id):
-            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้ (ต้องเป็นแอดมินเซิร์ฟเวอร์หรือแอดมินบอท)", ephemeral=True)
         
         await interaction.response.defer(ephemeral=True)
         

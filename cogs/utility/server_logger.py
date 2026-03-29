@@ -142,9 +142,15 @@ class ServerLogger(commands.Cog):
 
     def _add_field(self, embed: discord.Embed, name: str, value: str, inline: bool = False) -> None:
         """Add a field to embed safely, truncating value if it exceeds 1024 chars."""
-        safe_value = (value or "_(ว่าง)_")
+        # ป้องกันค่าว่างเปล่า
+        safe_value = str(value or "_(ว่าง)_").strip()
+        if not safe_value:
+            safe_value = "_(ระบุไม่ได้)_"
+
+        # ตัดให้เหลือ 1024 ตามกติกา Discord (ตัดเหลือ 1021 เพื่อรวม ...)
         if len(safe_value) > 1024:
-            safe_value = safe_value[:1021] + "..."
+            safe_value = safe_value[:1020] + "..."
+            
         embed.add_field(name=name, value=safe_value, inline=inline)
 
 
@@ -182,11 +188,8 @@ class ServerLogger(commands.Cog):
         embed.set_author(name=member.name, icon_url=member.display_avatar.url)
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.description = f"{member.mention} เข้าร่วมเซิร์ฟเวอร์"
-        embed.add_field(
-            name="บัญชีสร้างเมื่อ",
-            value=f"{discord.utils.format_dt(member.created_at, 'D')}\n{discord.utils.format_dt(member.created_at, 'R')}",
-        )
-        embed.add_field(name="จำนวนสมาชิก", value=str(member.guild.member_count))
+        self._add_field(embed, "บัญชีสร้างเมื่อ", f"{discord.utils.format_dt(member.created_at, 'D')}\n{discord.utils.format_dt(member.created_at, 'R')}")
+        self._add_field(embed, "จำนวนสมาชิก", str(member.guild.member_count))
         embed.set_footer(text=f"User ID: {member.id}")
 
         # ── Invite tracking ──
@@ -230,8 +233,8 @@ class ServerLogger(commands.Cog):
         if entry:
             embed.title = "👢 สมาชิกถูกเตะออก (Kick)"
             embed.color = discord.Color.dark_orange()
-            embed.add_field(name="เตะโดย", value=entry.user.mention)
-            embed.add_field(name="เหตุผล", value=entry.reason or "ไม่ระบุ")
+            self._add_field(embed, "เตะโดย", entry.user.mention)
+            self._add_field(embed, "เหตุผล", entry.reason or "ไม่ระบุ")
 
         await self.send_log(embed, member.guild)
 
@@ -247,8 +250,8 @@ class ServerLogger(commands.Cog):
 
         entry = await self._get_audit_entry(guild, discord.AuditLogAction.ban, user.id)
         if entry:
-            embed.add_field(name="แบนโดย", value=entry.user.mention)
-            embed.add_field(name="เหตุผล", value=entry.reason or "ไม่ระบุ")
+            self._add_field(embed, "แบนโดย", entry.user.mention)
+            self._add_field(embed, "เหตุผล", entry.reason or "ไม่ระบุ")
 
         embed.set_footer(text=f"User ID: {user.id}")
         await self.send_log(embed, guild)
@@ -265,7 +268,7 @@ class ServerLogger(commands.Cog):
 
         entry = await self._get_audit_entry(guild, discord.AuditLogAction.unban, user.id)
         if entry:
-            embed.add_field(name="ยกเลิกโดย", value=entry.user.mention)
+                self._add_field(embed, "ยกเลิกโดย", entry.user.mention)
 
         await self.send_log(embed, guild)
 
@@ -278,11 +281,11 @@ class ServerLogger(commands.Cog):
             embed = discord.Embed(title="📝 เปลี่ยนชื่อเล่น", color=discord.Color.blue(), timestamp=self._now())
             embed.set_author(name=after.name, icon_url=after.display_avatar.url)
             embed.description = f"{after.mention} เปลี่ยนชื่อเล่น"
-            embed.add_field(name="ชื่อเล่นเดิม", value=before.nick or "_(ไม่มี)_", inline=True)
-            embed.add_field(name="ชื่อเล่นใหม่", value=after.nick or "_(ไม่มี)_", inline=True)
+            self._add_field(embed, "ชื่อเล่นเดิม", before.nick or "_(ไม่มี)_", inline=True)
+            self._add_field(embed, "ชื่อเล่นใหม่", after.nick or "_(ไม่มี)_", inline=True)
             entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_update, after.id)
             if entry and entry.user.id != after.id:
-                embed.add_field(name="แก้ไขโดย", value=entry.user.mention, inline=False)
+                self._add_field(embed, "แก้ไขโดย", entry.user.mention, inline=False)
             embed.set_footer(text=f"User ID: {after.id}")
             await self.send_log(embed, guild)
 
@@ -302,8 +305,8 @@ class ServerLogger(commands.Cog):
             embed.set_author(name=after.name, icon_url=after.display_avatar.url)
             entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_update, after.id)
             if entry:
-                embed.add_field(name="ดำเนินการโดย", value=entry.user.mention)
-                embed.add_field(name="เหตุผล", value=entry.reason or "ไม่ระบุ")
+                self._add_field(embed, "ดำเนินการโดย", entry.user.mention)
+                self._add_field(embed, "เหตุผล", entry.reason or "ไม่ระบุ")
             embed.set_footer(text=f"User ID: {after.id}")
             await self.send_log(embed, guild)
 
@@ -320,7 +323,7 @@ class ServerLogger(commands.Cog):
                     self._add_field(embed, "❌ ถอดบทบาท", " ".join(r.mention for r in removed), inline=False)
                 entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_role_update, after.id)
                 if entry:
-                    embed.add_field(name="ดำเนินการโดย", value=entry.user.mention, inline=False)
+                    self._add_field(embed, "ดำเนินการโดย", entry.user.mention, inline=False)
                 embed.set_footer(text=f"User ID: {after.id}")
                 await self.send_log(embed, guild)
 
@@ -332,12 +335,12 @@ class ServerLogger(commands.Cog):
             
             entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_update, after.id)
             if entry and (entry.before.avatar is not None or entry.after.avatar is not None):
-                 embed.add_field(name="ดำเนินการโดย", value=entry.user.mention, inline=False)
+                 self._add_field(embed, "ดำเนินการโดย", entry.user.mention, inline=False)
             if before.guild_avatar:
-                embed.add_field(name="รูปเดิม", value=f"[คลิก]({before.guild_avatar.url})")
+                self._add_field(embed, "รูปเดิม", f"[คลิก]({before.guild_avatar.url})")
             if after.guild_avatar:
                 embed.set_image(url=after.guild_avatar.url)
-                embed.add_field(name="รูปใหม่", value=f"[คลิก]({after.guild_avatar.url})")
+                self._add_field(embed, "รูปใหม่", f"[คลิก]({after.guild_avatar.url})")
             embed.set_footer(text=f"User ID: {after.id}")
             await self.send_log(embed, guild)
 
@@ -348,8 +351,8 @@ class ServerLogger(commands.Cog):
             embed = discord.Embed(title="👤 เปลี่ยนชื่อผู้ใช้", color=discord.Color.blue(), timestamp=self._now())
             embed.set_author(name=after.name, icon_url=after.display_avatar.url)
             embed.description = f"{after.mention} เปลี่ยนชื่อผู้ใช้"
-            embed.add_field(name="ชื่อเดิม", value=f"{before.name}#{before.discriminator}", inline=True)
-            embed.add_field(name="ชื่อใหม่", value=f"{after.name}#{after.discriminator}", inline=True)
+            self._add_field(embed, "ชื่อเดิม", f"{before.name}#{before.discriminator}", inline=True)
+            self._add_field(embed, "ชื่อใหม่", f"{after.name}#{after.discriminator}", inline=True)
             embed.set_footer(text=f"User ID: {after.id}")
             await self.send_log(embed)
 
@@ -360,10 +363,10 @@ class ServerLogger(commands.Cog):
             embed.description = f"{after.mention} เปลี่ยนรูปโปรไฟล์หลักของบัญชี"
             if before.avatar:
                 embed.set_thumbnail(url=before.avatar.url)
-                embed.add_field(name="รูปเดิม", value=f"[คลิก]({before.avatar.url})")
+                self._add_field(embed, "รูปเดิม", f"[คลิก]({before.avatar.url})")
             if after.avatar:
                 embed.set_image(url=after.avatar.url)
-                embed.add_field(name="รูปใหม่", value=f"[คลิก]({after.avatar.url})")
+                self._add_field(embed, "รูปใหม่", f"[คลิก]({after.avatar.url})")
             embed.set_footer(text=f"User ID: {after.id}")
             await self.send_log(embed)
 
@@ -402,14 +405,14 @@ class ServerLogger(commands.Cog):
                 entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_disconnect, member.id)
                 if entry:
                     embed.title = "🚫 ถูกตัดการเชื่อมต่อจากช่องเสียง"
-                    embed.add_field(name="ดำเนินการโดย", value=f"{entry.user.mention} ({entry.user.name})", inline=False)
+                    self._add_field(embed, "ดำเนินการโดย", f"{entry.user.mention} ({entry.user.name})", inline=False)
 
             else:
                 embed.title = "🔄 ย้ายช่องเสียง"
                 embed.description = f"{member.mention} ย้ายจาก {before.channel.mention} → {after.channel.mention}"
                 entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_move, member.id)
                 if entry:
-                    embed.add_field(name="ย้ายโดย", value=f"{entry.user.mention} ({entry.user.name})", inline=False)
+                    self._add_field(embed, "ย้ายโดย", f"{entry.user.mention} ({entry.user.name})", inline=False)
 
             await self.send_log(embed, guild)
             return
@@ -443,7 +446,7 @@ class ServerLogger(commands.Cog):
             if is_server_action:
                 entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_update, member.id)
                 if entry:
-                    embed.add_field(name="ดำเนินการโดย", value=f"{entry.user.mention} ({entry.user.name})", inline=False)
+                    self._add_field(embed, "ดำเนินการโดย", f"{entry.user.mention} ({entry.user.name})", inline=False)
 
             embed.set_footer(text=f"User ID: {member.id}")
             await self.send_log(embed, guild)
@@ -471,9 +474,9 @@ class ServerLogger(commands.Cog):
             if a.content_type and "image" in a.content_type and not embed.image.url:
                 embed.set_image(url=a.proxy_url or a.url)
 
-        embed.add_field(name="ไฟล์แนบ", value="\n".join(file_lines)[:1024], inline=False)
+        self._add_field(embed, "ไฟล์แนบ", "\n".join(file_lines), inline=False)
         if message.content:
-            embed.add_field(name="ข้อความ", value=message.content[:512], inline=False)
+            self._add_field(embed, "ข้อความ", message.content[:1000], inline=False)
         embed.set_footer(text=f"User ID: {message.author.id} | Msg ID: {message.id}")
         await self.send_log(embed, message.guild)
 
@@ -487,10 +490,10 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title="✏️ แก้ไขข้อความ", color=discord.Color.yellow(), timestamp=self._now())
         embed.set_author(name=after.author.name, icon_url=after.author.display_avatar.url)
         embed.description = f"แก้ไขข้อความโดย {after.author.mention}"
-        embed.add_field(name="ช่อง", value=after.channel.mention, inline=True)
-        embed.add_field(name="ลิงก์ข้อความ", value=f"[คลิกที่นี่]({after.jump_url})", inline=True)
-        embed.add_field(name="ก่อนแก้ไข", value=before.content[:1024] or "_(ว่าง)_", inline=False)
-        embed.add_field(name="หลังแก้ไข", value=after.content[:1024] or "_(ว่าง)_", inline=False)
+        self._add_field(embed, "ช่อง", after.channel.mention, inline=True)
+        self._add_field(embed, "ลิงก์ข้อความ", f"[คลิกที่นี่]({after.jump_url})", inline=True)
+        self._add_field(embed, "ก่อนแก้ไข", before.content or "_(ว่าง)_", inline=False)
+        self._add_field(embed, "หลังแก้ไข", after.content or "_(ว่าง)_", inline=False)
 
         if after.attachments:
             for a in after.attachments:
@@ -514,7 +517,7 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title=title, color=discord.Color.red(), timestamp=self._now())
         embed.set_author(name=message.author.name, icon_url=message.author.display_avatar.url)
         embed.description = f"ข้อความของ {message.author.mention} ถูกลบในช่อง {message.channel.mention}"
-        embed.add_field(name="เนื้อหา", value=(message.content or "_(ว่าง)_")[:1024], inline=False)
+        self._add_field(embed, "เนื้อหา", message.content or "_(ว่าง)_", inline=False)
 
         # ไฟล์แนบ
         if message.attachments:
@@ -539,7 +542,7 @@ class ServerLogger(commands.Cog):
             if others:
                 parts.append("📁 ไฟล์อื่น: " + ", ".join(others))
             if parts:
-                embed.add_field(name="ไฟล์แนบ", value="\n".join(parts)[:1024], inline=False)
+                self._add_field(embed, "ไฟล์แนบ", "\n".join(parts), inline=False)
 
         # ตรวจว่าใครลบ (ต้องใช้ audit log)
         info_footer = f"Author: {message.author.id} | Msg ID: {message.id}"
@@ -548,7 +551,7 @@ class ServerLogger(commands.Cog):
                 message.guild, discord.AuditLogAction.message_delete, message.author.id, within_seconds=5
             )
             if entry:
-                embed.add_field(name="ลบโดย", value=entry.user.mention, inline=False)
+                self._add_field(embed, "ลบโดย", entry.user.mention, inline=False)
             else:
                 info_footer += " | หากไม่มีชื่อผู้ลบ แปลว่าเป็นเจ้าของข้อความลบเอง"
 
@@ -581,9 +584,10 @@ class ServerLogger(commands.Cog):
                 author_count[m.author.name] += 1
         if author_count:
             top = sorted(author_count.items(), key=lambda x: x[1], reverse=True)[:5]
-            embed.add_field(
-                name="ข้อความของ (Top 5)",
-                value="\n".join(f"`{name}`: {cnt} ข้อความ" for name, cnt in top),
+            self._add_field(
+                embed,
+                "ข้อความของ (Top 5)",
+                "\n".join(f"`{name}`: {cnt} ข้อความ" for name, cnt in top),
                 inline=False,
             )
 
@@ -599,7 +603,7 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title="🆕 สร้างช่องใหม่", color=discord.Color.green(), timestamp=self._now())
         embed.description = f"**{channel.name}** ({channel.mention})\nประเภท: `{channel.type}`"
         if channel.category:
-            embed.add_field(name="หมวดหมู่", value=channel.category.name)
+            self._add_field(embed, "หมวดหมู่", channel.category.name)
 
         entry = await self._get_audit_entry(channel.guild, discord.AuditLogAction.channel_create, channel.id)
         if entry:
@@ -612,7 +616,7 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title="🗑️ ลบช่อง", color=discord.Color.red(), timestamp=self._now())
         embed.description = f"ชื่อช่อง: **{channel.name}**\nประเภท: `{channel.type}`"
         if channel.category:
-            embed.add_field(name="หมวดหมู่", value=channel.category.name)
+            self._add_field(embed, "หมวดหมู่", channel.category.name)
 
         entry = await self._get_audit_entry(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
         if entry:
@@ -631,19 +635,20 @@ class ServerLogger(commands.Cog):
         changed = False
 
         if before.name != after.name:
-            embed.add_field(name="เปลี่ยนชื่อ", value=f"`{before.name}` → `{after.name}`", inline=False)
+            self._add_field(embed, "เปลี่ยนชื่อ", f"`{before.name}` → `{after.name}`", inline=False)
             changed = True
         if before.category != after.category:
-            embed.add_field(
-                name="ย้ายหมวดหมู่",
-                value=f"`{before.category}` → `{after.category}`",
+            self._add_field(
+                embed,
+                "ย้ายหมวดหมู่",
+                f"`{before.category}` → `{after.category}`",
                 inline=False,
             )
             changed = True
 
         # ตรวจ permission overwrites
         if hasattr(before, "overwrites") and before.overwrites != after.overwrites:
-            embed.add_field(name="สิทธิ์ (Overwrites)", value="มีการแก้ไข Permission Overwrites", inline=False)
+            self._add_field(embed, "สิทธิ์ (Overwrites)", "มีการแก้ไข Permission Overwrites", inline=False)
             changed = True
 
         if not changed:
@@ -663,13 +668,13 @@ class ServerLogger(commands.Cog):
     async def on_guild_role_create(self, role: discord.Role) -> None:
         embed = discord.Embed(title="🎭 สร้างบทบาทใหม่", color=discord.Color.green(), timestamp=self._now())
         embed.description = f"บทบาท: {role.mention} (`{role.name}`)"
-        embed.add_field(name="สี", value=str(role.color))
-        embed.add_field(name="Hoisted", value="✅" if role.hoist else "❌")
-        embed.add_field(name="Mentionable", value="✅" if role.mentionable else "❌")
+        self._add_field(embed, "สี", str(role.color))
+        self._add_field(embed, "Hoisted", "✅" if role.hoist else "❌")
+        self._add_field(embed, "Mentionable", "✅" if role.mentionable else "❌")
 
         entry = await self._get_audit_entry(role.guild, discord.AuditLogAction.role_create, role.id)
         if entry:
-            embed.add_field(name="สร้างโดย", value=f"{entry.user.mention} ({entry.user.name})")
+            self._add_field(embed, "สร้างโดย", f"{entry.user.mention} ({entry.user.name})")
 
         await self.send_log(embed, role.guild)
 
@@ -695,16 +700,16 @@ class ServerLogger(commands.Cog):
         changed = False
 
         if before.name != after.name:
-            embed.add_field(name="เปลี่ยนชื่อ", value=f"`{before.name}` → `{after.name}`", inline=False)
+            self._add_field(embed, "เปลี่ยนชื่อ", f"`{before.name}` → `{after.name}`", inline=False)
             changed = True
         if before.color != after.color:
-            embed.add_field(name="เปลี่ยนสี", value=f"`{before.color}` → `{after.color}`", inline=False)
+            self._add_field(embed, "เปลี่ยนสี", f"`{before.color}` → `{after.color}`", inline=False)
             changed = True
         if before.hoist != after.hoist:
-            embed.add_field(name="Hoisted", value="✅ เปิด" if after.hoist else "❌ ปิด", inline=True)
+            self._add_field(embed, "Hoisted", "✅ เปิด" if after.hoist else "❌ ปิด", inline=True)
             changed = True
         if before.mentionable != after.mentionable:
-            embed.add_field(name="Mentionable", value="✅ เปิด" if after.mentionable else "❌ ปิด", inline=True)
+            self._add_field(embed, "Mentionable", "✅ เปิด" if after.mentionable else "❌ ปิด", inline=True)
             changed = True
         if before.permissions != after.permissions:
             granted, revoked = diff_permissions(before.permissions, after.permissions)
@@ -733,26 +738,27 @@ class ServerLogger(commands.Cog):
         changed = False
 
         if before.name != after.name:
-            embed.add_field(name="เปลี่ยนชื่อ", value=f"`{before.name}` → `{after.name}`", inline=False)
+            self._add_field(embed, "เปลี่ยนชื่อ", f"`{before.name}` → `{after.name}`", inline=False)
             changed = True
         if before.description != after.description:
             desc_text = f"**เดิม:** {before.description or '_(ว่าง)_'}\n**ใหม่:** {after.description or '_(ว่าง)_'}"
             self._add_field(embed, "เปลี่ยนคำอธิบาย", desc_text, inline=False)
             changed = True
         if before.icon != after.icon:
-            embed.add_field(name="เปลี่ยนไอคอน", value="มีการอัปเดตรูปไอคอน", inline=False)
+            self._add_field(embed, "เปลี่ยนไอคอน", "มีการอัปเดตรูปไอคอน", inline=False)
             if after.icon:
                 embed.set_thumbnail(url=after.icon.url)
             changed = True
         if before.banner != after.banner:
-            embed.add_field(name="เปลี่ยนแบนเนอร์", value="มีการอัปเดตแบนเนอร์", inline=False)
+            self._add_field(embed, "เปลี่ยนแบนเนอร์", "มีการอัปเดตแบนเนอร์", inline=False)
             if after.banner:
                 embed.set_image(url=after.banner.url)
             changed = True
         if before.verification_level != after.verification_level:
-            embed.add_field(
-                name="เปลี่ยนระดับยืนยัน",
-                value=f"`{before.verification_level}` → `{after.verification_level}`",
+            self._add_field(
+                embed,
+                "เปลี่ยนระดับยืนยัน",
+                f"`{before.verification_level}` → `{after.verification_level}`",
                 inline=False,
             )
             changed = True
@@ -760,7 +766,7 @@ class ServerLogger(commands.Cog):
         if changed:
             entry = await self._get_audit_entry(after, discord.AuditLogAction.guild_update, after.id)
             if entry:
-                embed.add_field(name="แก้ไขโดย", value=entry.user.mention, inline=False)
+                self._add_field(embed, "แก้ไขโดย", entry.user.mention, inline=False)
             await self.send_log(embed, after)
 
     # ──────────────────────────────────────────
@@ -772,9 +778,9 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title="🧵 สร้างเธรดใหม่", color=discord.Color.green(), timestamp=self._now())
         embed.description = f"เธรด: **{thread.name}** ({thread.mention})"
         if thread.parent:
-            embed.add_field(name="ช่องหลัก", value=thread.parent.mention)
+            self._add_field(embed, "ช่องหลัก", thread.parent.mention)
         if thread.owner:
-            embed.add_field(name="สร้างโดย", value=thread.owner.mention)
+            self._add_field(embed, "สร้างโดย", thread.owner.mention)
         await self.send_log(embed, thread.guild)
 
     @commands.Cog.listener()
@@ -782,7 +788,7 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title="🗑️ ลบเธรด", color=discord.Color.red(), timestamp=self._now())
         embed.description = f"ชื่อเธรด: **{thread.name}**"
         if thread.parent:
-            embed.add_field(name="ช่องหลัก", value=thread.parent.name)
+            self._add_field(embed, "ช่องหลัก", thread.parent.name)
         await self.send_log(embed, thread.guild)
 
     @commands.Cog.listener()
@@ -793,11 +799,11 @@ class ServerLogger(commands.Cog):
         embed.description = f"เธรด: {after.mention} (`{after.name}`)"
 
         if before.name != after.name:
-            embed.add_field(name="เปลี่ยนชื่อ", value=f"`{before.name}` → `{after.name}`")
+            self._add_field(embed, "เปลี่ยนชื่อ", f"`{before.name}` → `{after.name}`")
         if before.archived != after.archived:
-            embed.add_field(name="สถานะ", value="📦 จัดเก็บแล้ว" if after.archived else "🔄 เปิดใช้งานใหม่")
+            self._add_field(embed, "สถานะ", "📦 จัดเก็บแล้ว" if after.archived else "🔄 เปิดใช้งานใหม่")
         if before.locked != after.locked:
-            embed.add_field(name="ล็อก", value="🔒 ล็อกแล้ว" if after.locked else "🔓 ปลดล็อก")
+            self._add_field(embed, "ล็อก", "🔒 ล็อกแล้ว" if after.locked else "🔓 ปลดล็อก")
 
         await self.send_log(embed, after.guild)
 
@@ -809,12 +815,12 @@ class ServerLogger(commands.Cog):
     async def on_invite_create(self, invite: discord.Invite) -> None:
         embed = discord.Embed(title="📩 สร้างลิงก์เชิญ", color=discord.Color.blue(), timestamp=self._now())
         embed.description = f"ลิงก์: `{invite.url}`\nช่อง: {invite.channel.mention}"
-        embed.add_field(name="สร้างโดย", value=invite.inviter.mention if invite.inviter else "ระบบ")
+        self._add_field(embed, "สร้างโดย", invite.inviter.mention if invite.inviter else "ระบบ")
         max_uses = f"{invite.max_uses} ครั้ง" if invite.max_uses else "ไม่จำกัด"
         max_age = "ไม่หมดอายุ" if invite.max_age == 0 else f"{invite.max_age // 60} นาที"
-        embed.add_field(name="ใช้ได้สูงสุด", value=max_uses)
-        embed.add_field(name="หมดอายุใน", value=max_age)
-        embed.add_field(name="Temporary", value="✅" if invite.temporary else "❌")
+        self._add_field(embed, "ใช้ได้สูงสุด", max_uses)
+        self._add_field(embed, "หมดอายุใน", max_age)
+        self._add_field(embed, "Temporary", "✅" if invite.temporary else "❌")
         embed.set_footer(text=f"Code: {invite.code}")
 
         if invite.guild and invite.guild.id not in self.invites:
@@ -831,7 +837,7 @@ class ServerLogger(commands.Cog):
         
         entry = await self._get_audit_entry(invite.guild, discord.AuditLogAction.invite_delete, invite.code) if invite.guild else None
         if entry:
-            embed.add_field(name="ลบโดย", value=entry.user.mention)
+            self._add_field(embed, "ลบโดย", entry.user.mention)
             
         await self.send_log(embed, invite.guild)
 
@@ -931,11 +937,10 @@ class ServerLogger(commands.Cog):
 
     @commands.Cog.listener()
     async def on_stage_instance_update(self, before: discord.StageInstance, after: discord.StageInstance) -> None:
-        if before.topic == after.topic:
-            return
-        embed = discord.Embed(title="🎭 อัปเดตกิจกรรมเวที", color=discord.Color.blue(), timestamp=self._now())
-        embed.add_field(name="หัวข้อเดิม", value=before.topic)
-        embed.add_field(name="หัวข้อใหม่", value=after.topic)
+        embed.description = f"เธรด: {after.mention} (`{after.name}`)"
+        if before.topic != after.topic:
+            self._add_field(embed, "หัวข้อเดิม", before.topic)
+            self._add_field(embed, "หัวข้อใหม่", after.topic)
         await self.send_log(embed, after.guild)
 
     # ──────────────────────────────────────────
@@ -947,12 +952,12 @@ class ServerLogger(commands.Cog):
         embed = discord.Embed(title="📅 สร้างกิจกรรม (Scheduled Event)", color=discord.Color.green(), timestamp=self._now())
         embed.description = f"**{event.name}**"
         if event.description:
-            embed.add_field(name="รายละเอียด", value=event.description[:512], inline=False)
-        embed.add_field(name="เริ่มต้น", value=discord.utils.format_dt(event.start_time, "F"))
+            self._add_field(embed, "รายละเอียด", event.description, inline=False)
+        self._add_field(embed, "เริ่มต้น", discord.utils.format_dt(event.start_time, "F"))
         if event.end_time:
-            embed.add_field(name="สิ้นสุด", value=discord.utils.format_dt(event.end_time, "F"))
+            self._add_field(embed, "สิ้นสุด", discord.utils.format_dt(event.end_time, "F"))
         if event.creator:
-            embed.add_field(name="สร้างโดย", value=event.creator.mention)
+            self._add_field(embed, "สร้างโดย", event.creator.mention)
         if event.image:
             embed.set_image(url=event.image.url)
         await self.send_log(embed, event.guild)
@@ -986,7 +991,7 @@ class ServerLogger(commands.Cog):
     async def on_automod_rule_create(self, rule: discord.AutoModRule) -> None:
         embed = discord.Embed(title="🛡️ สร้างกฎ AutoMod ใหม่", color=discord.Color.green(), timestamp=self._now())
         embed.description = f"ชื่อกฎ: **{rule.name}**\nID: `{rule.id}`"
-        embed.add_field(name="ประเภท Event", value=str(rule.event_type))
+        self._add_field(embed, "ประเภท Event", str(rule.event_type))
         await self.send_log(embed, rule.guild)
 
     @commands.Cog.listener()
@@ -1007,9 +1012,9 @@ class ServerLogger(commands.Cog):
             f"การกระทำ: `{execution.action.type}`"
         )
         if execution.content:
-            embed.add_field(name="เนื้อหาที่ถูกจับ", value=execution.content[:1024], inline=False)
+            self._add_field(embed, "เนื้อหาที่ถูกจับ", execution.content, inline=False)
         if execution.matched_keyword:
-            embed.add_field(name="คำที่ match", value=f"`{execution.matched_keyword}`", inline=True)
+            self._add_field(embed, "คำที่ match", f"`{execution.matched_keyword}`", inline=True)
         embed.set_footer(text=f"User ID: {execution.user_id}")
         await self.send_log(embed, execution.guild)
 
@@ -1024,7 +1029,7 @@ class ServerLogger(commands.Cog):
         
         entry = await self._get_audit_entry(channel.guild, discord.AuditLogAction.webhook_update, 0)
         if entry:
-             embed.add_field(name="ดำเนินการโดย", value=entry.user.mention)
+             self._add_field(embed, "ดำเนินการโดย", entry.user.mention)
              
         await self.send_log(embed, channel.guild)
 
@@ -1035,7 +1040,7 @@ class ServerLogger(commands.Cog):
         
         entry = await self._get_audit_entry(guild, discord.AuditLogAction.integration_update, 0)
         if entry:
-            embed.add_field(name="ดำเนินการโดย", value=entry.user.mention)
+            self._add_field(embed, "ดำเนินการโดย", entry.user.mention)
             
         await self.send_log(embed, guild)
 
@@ -1052,9 +1057,10 @@ class ServerLogger(commands.Cog):
 
         opts = interaction.data.get("options") if interaction.data else None
         if opts:
-            embed.add_field(
-                name="พารามิเตอร์",
-                value="\n".join(f"**{o['name']}:** `{o.get('value', '—')}`" for o in opts),
+            self._add_field(
+                embed,
+                "พารามิเตอร์",
+                "\n".join(f"**{o['name']}:** `{o.get('value', '—')}`" for o in opts),
                 inline=False,
             )
 
