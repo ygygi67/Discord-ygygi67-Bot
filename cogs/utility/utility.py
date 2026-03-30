@@ -19,6 +19,34 @@ import yt_dlp
 
 logger = logging.getLogger('discord_bot')
 
+
+class AudioFallbackView(discord.ui.View):
+    def __init__(self, cog, url: str, requester_id: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.url = url
+        self.requester_id = requester_id
+        self.is_processing = False
+
+    @discord.ui.button(label="🎧 โหลดเป็น MP3 แทน", style=discord.ButtonStyle.green)
+    async def switch_to_mp3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.requester_id:
+            return await interaction.response.send_message("❌ ปุ่มนี้สำหรับคนที่สั่งคำสั่งเท่านั้น", ephemeral=True)
+        if self.is_processing:
+            return await interaction.response.send_message("⏳ กำลังสลับเป็นโหมด MP3 อยู่ กรุณารอสักครู่", ephemeral=True)
+
+        self.is_processing = True
+        button.disabled = True
+        button.label = "⏳ กำลังโหลด MP3..."
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            await interaction.edit_original_response(view=self)
+        except Exception:
+            pass
+
+        await self.cog._download_clip_core(interaction, self.url, "mp3", defer_response=False)
+
 class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1764,21 +1792,18 @@ class Utility(commands.Cog):
             logger.warning(f"Catbox upload error: {e}")
         return None
 
-    @app_commands.command(name="โหลดคลิป", description="ดาวน์โหลดคลิปจาก URL (YouTube, TikTok, Facebook, ฯลฯ)")
-    @app_commands.describe(url="ลิงก์คลิปที่ต้องการโหลด", mode="รูปแบบไฟล์ (MP4 หรือ MP3)")
-    @app_commands.choices(mode=[
-        app_commands.Choice(name="วิดีโอ (MP4)", value="mp4"),
-        app_commands.Choice(name="เสียง (MP3)", value="mp3")
-    ])
-    async def download_clip(self, interaction: discord.Interaction, url: str, mode: str = "mp4"):
-        """ดาวน์โหลดวิดีโอหรือเสียงจากลิงก์ต่างๆ"""
-        await interaction.response.defer(ephemeral=False)
-        
+    async def _download_clip_core(self, interaction: discord.Interaction, url: str, mode: str = "mp4", defer_response: bool = True):
+        """ดาวน์โหลดวิดีโอหรือเสียงจากลิงก์ต่างๆ (internal core)"""
+        if defer_response:
+            await interaction.response.defer(ephemeral=False)
+
         # กรอง URL เบื้องต้น
         if not (url.startswith("http://") or url.startswith("https://")):
-            return await interaction.followup.send("❌ รูปแบบ URL ไม่ถูกต้อง กรุณาใส่ลิงก์ที่ขึ้นต้นด้วย http:// หรือ https://", ephemeral=True)
+            if interaction.response.is_done():
+                return await interaction.followup.send("❌ รูปแบบ URL ไม่ถูกต้อง กรุณาใส่ลิงก์ที่ขึ้นต้นด้วย http:// หรือ https://", ephemeral=True)
+            return await interaction.response.send_message("❌ รูปแบบ URL ไม่ถูกต้อง กรุณาใส่ลิงก์ที่ขึ้นต้นด้วย http:// หรือ https://", ephemeral=True)
 
-        status_msg = await interaction.followup.send(f"⏳ กำลังตรวจสอบและเตรียมดาวน์โหลดจาก {url}...")
+        await interaction.edit_original_response(content=f"⏳ กำลังตรวจสอบและเตรียมดาวน์โหลดจาก {url}...", view=None)
         
         temp_dir = tempfile.mkdtemp()
 
@@ -1960,6 +1985,65 @@ class Utility(commands.Cog):
         
         try:
             audio_only = (mode == "mp3")
+            mode_label = "MP3" if audio_only else "MP4"
+            loop = asyncio.get_running_loop()
+            progress_queue: asyncio.Queue[str] = asyncio.Queue()
+            latest_progress_text = ""
+            progress_done = asyncio.Event()
+
+            async def _queue_progress(text: str):
+                await progress_queue.put(text)
+
+            def _human_mb(value: int | None) -> str:
+                if not value:
+                    return "?"
+                return f"{value / (1024 * 1024):.2f}"
+
+            def progress_hook(d):
+                status = d.get('status')
+                if status == 'downloading':
+                    downloaded = d.get('downloaded_bytes')
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate')
+                    speed = d.get('speed')
+                    eta = d.get('eta')
+                    percent = (d.get('_percent_str') or "").replace(" ", "").strip()
+                    filename = os.path.basename(d.get('filename') or "")
+
+                    line = (
+                        f"⏳ กำลังดาวน์โหลดโหมด {mode_label}\n"
+                        f"📊 {percent or 'กำลังคำนวณ...'} | {_human_mb(downloaded)}/{_human_mb(total)} MB\n"
+                        f"🚀 ความเร็ว: {((speed or 0) / (1024 * 1024)):.2f} MB/s | ⌛ ETA: {eta if eta is not None else '?'}s\n"
+                        f"📄 ไฟล์: `{filename[:70]}`"
+                    )
+                    loop.call_soon_threadsafe(progress_queue.put_nowait, line)
+                elif status == 'finished':
+                    loop.call_soon_threadsafe(
+                        progress_queue.put_nowait,
+                        f"🔄 ดาวน์โหลดเสร็จแล้ว กำลังประมวลผลไฟล์ {mode_label}..."
+                    )
+                elif status == 'error':
+                    loop.call_soon_threadsafe(
+                        progress_queue.put_nowait,
+                        "❌ เกิดข้อผิดพลาดระหว่างดาวน์โหลด"
+                    )
+
+            async def progress_updater():
+                nonlocal latest_progress_text
+                while True:
+                    if progress_done.is_set() and progress_queue.empty():
+                        break
+                    try:
+                        msg = await asyncio.wait_for(progress_queue.get(), timeout=0.8)
+                    except asyncio.TimeoutError:
+                        continue
+                    latest_progress_text = msg
+                    while not progress_queue.empty():
+                        latest_progress_text = progress_queue.get_nowait()
+                    try:
+                        await interaction.edit_original_response(content=latest_progress_text)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.2)
             
             # ตั้งค่า yt-dlp
             ydl_opts = {
@@ -1968,6 +2052,7 @@ class Utility(commands.Cog):
                 'no_warnings': True,
                 'no_check_certificate': True,
                 'ignoreerrors': False,
+                'progress_hooks': [progress_hook],
             }
             
             if audio_only:
@@ -1996,9 +2081,18 @@ class Utility(commands.Cog):
 
             # ทำงานดาวน์โหลด
             try:
-                loop = asyncio.get_event_loop()
+                updater_task = asyncio.create_task(progress_updater())
+                await _queue_progress(f"⏳ กำลังเริ่มดาวน์โหลดโหมด {mode_label} ...")
                 filename, info = await loop.run_in_executor(None, run_ytdl)
+                progress_done.set()
+                await updater_task
             except Exception as e:
+                progress_done.set()
+                if 'updater_task' in locals():
+                    try:
+                        await updater_task
+                    except Exception:
+                        pass
                 err_str = str(e)
                 # ตรวจสอบ error message ที่รู้จัก
                 if 'Unsupported URL' in err_str:
@@ -2044,8 +2138,27 @@ class Utility(commands.Cog):
                 """ลองส่งใน Discord ถ้าใหญ่เกิน/ล้มเหลว → อัพ catbox → fallback local"""
                 nonlocal filename
                 base_name = os.path.basename(src_filename)
+                catbox_limit = 200 * 1024 * 1024  # 200 MB
 
                 if file_size > upload_limit:
+                    if file_size > catbox_limit:
+                        if not audio_only:
+                            view = AudioFallbackView(self, url, interaction.user.id)
+                            return await interaction.edit_original_response(
+                                content=(
+                                    f"⚠️ ไฟล์ใหญ่เกินที่ระบบฝากไฟล์รองรับ (`{file_size/(1024*1024):.1f} MB` > `200 MB`)\n"
+                                    "Discord ส่งตรงไม่ได้ และ catbox ก็อัปโหลดไม่ได้เช่นกัน\n"
+                                    "กดปุ่มด้านล่างเพื่อสลับเป็นโหมดเสียง (MP3) อัตโนมัติ"
+                                ),
+                                view=view
+                            )
+                        return await interaction.edit_original_response(
+                            content=(
+                                f"⚠️ ไฟล์เสียงใหญ่เกิน 200 MB (`{file_size/(1024*1024):.1f} MB`)\n"
+                                "ไม่สามารถอัปโหลดขึ้น catbox ได้ กรุณาลองลิงก์ที่สั้นลงหรือคุณภาพต่ำลง"
+                            ),
+                            view=None
+                        )
                     # ใหญ่เกิน Discord limit ตั้งแต่แรก → catbox
                     await interaction.edit_original_response(
                         content=f"☁️ ไฟล์ใหญ่เกิน {limit_mb:.0f} MB ({file_size/(1024*1024):.1f} MB) กำลังอัพโหลดขึ้น catbox.moe..."
@@ -2106,6 +2219,16 @@ class Utility(commands.Cog):
         finally:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
+
+    @app_commands.command(name="โหลดคลิป", description="ดาวน์โหลดคลิปจาก URL (YouTube, TikTok, Facebook, ฯลฯ)")
+    @app_commands.describe(url="ลิงก์คลิปที่ต้องการโหลด", mode="รูปแบบไฟล์ (MP4 หรือ MP3)")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="วิดีโอ (MP4)", value="mp4"),
+        app_commands.Choice(name="เสียง (MP3)", value="mp3")
+    ])
+    async def download_clip(self, interaction: discord.Interaction, url: str, mode: str = "mp4"):
+        """ดาวน์โหลดวิดีโอหรือเสียงจากลิงก์ต่างๆ"""
+        await self._download_clip_core(interaction, url, mode, defer_response=True)
 
 
 class MemberHelpView(discord.ui.View):

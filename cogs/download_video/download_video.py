@@ -23,6 +23,7 @@ import queue
 import mimetypes
 import urllib.parse
 import shutil
+from urllib.parse import urlparse
 
 class DownloadVideoCog(commands.Cog, name="DownloadVideo"):
     def __init__(self, bot):
@@ -71,6 +72,28 @@ def ensure_mutagen():
 auto_update_yt_dlp()
 yt_dlp = ensure_yt_dlp()
 EasyID3, ID3, APIC, ID3Error, requests = ensure_mutagen()
+status_lock = threading.Lock()
+
+def _short_url(url, max_len=55):
+    try:
+        host = urlparse(url).netloc.replace("www.", "")
+        short = f"{host}{urlparse(url).path}"
+    except Exception:
+        short = url
+    if len(short) > max_len:
+        return short[:max_len - 3] + "..."
+    return short
+
+def update_status(url, stage, detail=""):
+    """Render one-line live status (like edited message in terminal)."""
+    head = f"🔄 [{stage}] {_short_url(url)}"
+    line = f"{head} | {detail}" if detail else head
+    with status_lock:
+        print(f"\r{line[:180]:<180}", end="", flush=True)
+
+def end_status():
+    with status_lock:
+        print("")
 
 def log_result(message):
     with open("download_log.txt", "a", encoding="utf-8") as logf:
@@ -131,9 +154,24 @@ def get_download_folder():
 
 def progress_hook(d):
     if d['status'] == 'downloading':
-        print(f"  Downloading: {d.get('filename', '')} | {d.get('downloaded_bytes', 0) / 1024 / 1024:.2f} MB", end='\r')
+        downloaded = d.get('downloaded_bytes', 0) / 1024 / 1024
+        total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+        total_mb = total / 1024 / 1024 if total else 0
+        percent = (downloaded / total_mb * 100) if total_mb else 0
+        speed = d.get('speed') or 0
+        eta = d.get('eta')
+        speed_mb = speed / 1024 / 1024 if speed else 0
+        eta_text = f"{eta}s" if eta is not None else "?"
+        filename = os.path.basename(d.get('filename', '') or '')
+        detail = (
+            f"{percent:5.1f}% | {downloaded:,.2f}/{total_mb:,.2f} MB | "
+            f"{speed_mb:,.2f} MB/s | ETA {eta_text} | {filename}"
+        )
+        with status_lock:
+            print(f"\r📥 {detail[:165]:<165}", end="", flush=True)
     elif d['status'] == 'finished':
-        print(f"  Finished: {d.get('filename', '')}")
+        with status_lock:
+            print(f"\r✅ Finished: {os.path.basename(d.get('filename', '') or ''):<165}")
         beep()
 
 def ask_for_links():
@@ -421,13 +459,18 @@ def download_worker(q, download_folder, cookies_opts=None):
             break
         url, opts = item
         mode = opts.get('mode')
+        update_status(url, "Queued", "Preparing task")
         # --- Image support ---
         if is_image_url(url):
+            update_status(url, "Image", "Downloading image file")
             download_image(url, download_folder)
+            update_status(url, "Done", "Image download complete")
+            end_status()
             q.task_done()
             continue
         audio_only = (mode == 'mp3')
         ffmpeg_path = get_ffmpeg_location()
+        update_status(url, "Setup", "Preparing downloader and ffmpeg")
         ydl_opts = get_fast_ydl_opts(download_folder, audio_only, ffmpeg_path)
         if opts.get('start') or opts.get('end'):
             args = []
@@ -440,6 +483,7 @@ def download_worker(q, download_folder, cookies_opts=None):
         if cookies_opts:
             ydl_opts.update(cookies_opts)
         try:
+            update_status(url, "Metadata", "Fetching media information")
             playlist_id = extract_playlist_id(url)
             if playlist_id:
                 playlist_url = f'https://www.youtube.com/playlist?list={playlist_id}'
@@ -474,6 +518,7 @@ def download_worker(q, download_folder, cookies_opts=None):
                     single_ydl_opts = ydl_opts.copy()
                     single_ydl_opts['outtmpl'] = os.path.join(playlist_folder, '%(title)s.%(ext)s')
                     with yt_dlp.YoutubeDL(single_ydl_opts) as single_ydl:
+                        update_status(url, "Download", "Starting high quality download")
                         info = single_ydl.extract_info(url, download=False)
                         print(f"\n🎬 Title: {info.get('title', 'Unknown')}")
                         print(f"📺 Channel: {info.get('uploader', info.get('channel', 'Unknown'))}")
@@ -504,8 +549,11 @@ def download_worker(q, download_folder, cookies_opts=None):
                             log_result(f"FAILED: {url} | {msg}")
                         else:
                             print("✅ Download complete at MAXIMUM QUALITY!\n")
+                            update_status(url, "Done", "Download complete")
+                            end_status()
                             log_result(f"SUCCESS: {url} | {info.get('title', 'Unknown')}")
                             if audio_only:
+                                update_status(url, "Postprocess", "Embedding metadata and cover")
                                 embed_metadata_mp3(filename, info, url)
                     entries = playlist_info.get('entries', [])
                     entries = [entry for entry in entries if entry.get('id') != info.get('id')]
@@ -522,6 +570,7 @@ def download_worker(q, download_folder, cookies_opts=None):
                         playlist_ydl_opts = ydl_opts.copy()
                         playlist_ydl_opts['outtmpl'] = os.path.join(playlist_folder, '%(title)s.%(ext)s')
                         with yt_dlp.YoutubeDL(playlist_ydl_opts) as playlist_ydl:
+                            update_status(url, "Playlist", "Downloading all selected playlist videos")
                             playlist_ydl.download([playlist_url])
                         log_result(f"SUCCESS: {playlist_url} | Downloaded all videos in playlist: {playlist_title}")
                     elif sel == '1':
@@ -533,6 +582,7 @@ def download_worker(q, download_folder, cookies_opts=None):
                             playlist_ydl_opts['outtmpl'] = os.path.join(playlist_folder, '%(title)s.%(ext)s')
                             with yt_dlp.YoutubeDL(playlist_ydl_opts) as playlist_ydl:
                                 for entry in selected_entries:
+                                    update_status(url, "Playlist", f"Downloading: {entry.get('title', 'Unknown')[:48]}")
                                     playlist_ydl.download([entry.get('webpage_url')])
                                     log_result(f"SUCCESS: {entry.get('webpage_url')} | {entry.get('title', 'Unknown')}")
                         except Exception:
@@ -541,6 +591,7 @@ def download_worker(q, download_folder, cookies_opts=None):
                     continue
             # --- Single video logic ---
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                update_status(url, "Download", "Starting high quality download")
                 info = ydl.extract_info(url, download=False)
                 is_live = info.get('is_live') or info.get('was_live')
                 if is_live:
@@ -574,8 +625,11 @@ def download_worker(q, download_folder, cookies_opts=None):
                     log_result(f"FAILED: {url} | {msg}")
                 else:
                     print("✅ Download complete at MAXIMUM QUALITY!\n")
+                    update_status(url, "Done", "Download complete")
+                    end_status()
                     log_result(f"SUCCESS: {url} | {info.get('title', 'Unknown')}")
                     if audio_only:
+                        update_status(url, "Postprocess", "Embedding metadata and cover")
                         embed_metadata_mp3(filename, info, url)
             q.task_done()
         except Exception as e:
@@ -612,6 +666,8 @@ def download_worker(q, download_folder, cookies_opts=None):
                 print("👉 Try a different link or check the link again")
                 error_msg = "Error processing data"
             print(f"❌ Error downloading {url}: {error_msg}\n")
+            update_status(url, "Failed", error_msg[:120])
+            end_status()
             print("👉 If this is a protected or unsupported link, try another or check for yt-dlp updates.\n")
             log_result(f"FAILED: {url} | {error_msg}")
             q.task_done()
