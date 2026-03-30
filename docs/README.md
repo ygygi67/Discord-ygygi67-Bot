@@ -10,6 +10,39 @@
 - 📊 **Statistics** - เก็บสถิติการใช้งาน
 - 📝 **Logging** - บันทึกทุกกิจกรรม
 - 🛡️ **Moderation** - ระบบจัดการเซิร์ฟเวอร์
+- 🌐 **Intercom Cross-Server** - คุยข้ามเซิร์ฟเวอร์พร้อมระบบความปลอดภัย
+- 🎛️ **Intercom Control Panel** - จัดการระบบกรอง/ลิงก์/Log แบบปุ่มกด
+- 🎙️ **Voice Transcription** - ถอดเสียงจากลิงก์ข้อความหรือ Message ID
+
+## 🆕 Intercom & Voice Commands
+
+### Intercom Security
+
+- `/intercom_panel` เปิดหน้า Control Panel แบบปุ่มกด
+- `/intercom_security action:panel` เปิด Control Panel ผ่านคำสั่งรวม
+- `/intercom_security action:approve value:<domain_or_url>` อนุมัติโดเมนลิงก์
+- `/intercom_security action:unapprove value:<domain_or_url>` ถอนโดเมน
+- `/intercom_security action:add_badword value:<word>` เพิ่มคำไม่เหมาะสม
+- `/intercom_security action:remove_badword value:<word>` ลบคำไม่เหมาะสม
+- `/intercom_security action:list_badwords` ดูรายการคำไม่เหมาะสมแบบกำหนดเอง
+- `/intercom_security action:set_log log_channel:<channel>` ตั้งห้อง Log
+
+ระบบรองรับ:
+- กันสแปม (rate limit)
+- กรองคำไม่เหมาะสม (คำมาตรฐาน + คำกำหนดเอง)
+- กรองลิงก์ด้วย allowlist
+- บันทึก Log เหตุการณ์ความปลอดภัย
+- ซิงก์แก้ไขข้อความต้นทางไปยังข้อความปลายทางที่ถูกกระจาย
+
+### Intercom Moderation
+
+- `/intercom_purge link_or_id:<message_link_or_id>` ลบข้อความต้นทาง + ข้อความที่กระจายไปแล้ว
+
+### Voice
+
+- `/ถอดเสียงข้อความ ข้อความลิงก์หรือไอดี:<message_link_or_id> [ช่อง:<text_channel>]`
+- รองรับทั้งลิงก์ข้อความ Discord และ Message ID
+- ถอดเสียงจากไฟล์เสียง/voice message และตอบกลับเป็นข้อความ
 
 ## 🚀 Quick Start
 
