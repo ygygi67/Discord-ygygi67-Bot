@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────
 _BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.normpath(os.path.join(_BASE, "..", "..", "data", "server_link_config.json"))
+MESSAGE_MAP_PATH = os.path.normpath(os.path.join(_BASE, "..", "..", "data", "intercom_message_map.json"))
 URL_PATTERN = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
 BLOCKED_WORDS = {
     "ควย", "เหี้ย", "สัส", "สัด", "fuck", "bitch", "nigger", "porn", "xxx"
@@ -62,6 +63,7 @@ def get_guild_settings(guild_id: int) -> dict:
         "content_filter_enabled": True,
         "link_filter_enabled": True,
         "approved_link_domains": DEFAULT_APPROVED_DOMAINS,
+        "intercom_log_channel_id": None,
     }
     guild_data = config.get(str(guild_id), {})
     for k, v in defaults.items():
@@ -85,9 +87,27 @@ def update_guild_settings(guild_id: int, **kwargs):
             "content_filter_enabled": True,
             "link_filter_enabled": True,
             "approved_link_domains": list(DEFAULT_APPROVED_DOMAINS),
+            "intercom_log_channel_id": None,
         }
     config[gid_str].update(kwargs)
     _save_config(config)
+
+def _load_message_map() -> dict:
+    try:
+        if os.path.exists(MESSAGE_MAP_PATH):
+            with open(MESSAGE_MAP_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading intercom_message_map: {e}")
+    return {}
+
+def _save_message_map(data: dict):
+    try:
+        os.makedirs(os.path.dirname(MESSAGE_MAP_PATH), exist_ok=True)
+        with open(MESSAGE_MAP_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving intercom_message_map: {e}")
 
 class ServerSetupView(discord.ui.View):
     def __init__(self, guild_id: int):
@@ -177,6 +197,139 @@ class ServerLink(commands.Cog):
 
         return True, ""
 
+    def _apply_intercom_meta(
+        self,
+        embed: discord.Embed,
+        *,
+        user: discord.abc.User,
+        guild: discord.Guild,
+    ) -> discord.Embed:
+        embed.set_author(
+            name=f"{user.name} • UID: {user.id}",
+            icon_url=user.display_avatar.url
+        )
+        guild_icon = guild.icon.url if guild.icon else None
+        embed.set_footer(
+            text=f"GID: {guild.id}",
+            icon_url=guild_icon
+        )
+        return embed
+
+    def _can_manage_intercom(self, interaction: discord.Interaction) -> bool:
+        if self._is_bot_admin(interaction.user.id):
+            return True
+        if isinstance(interaction.user, discord.Member):
+            return interaction.user.guild_permissions.manage_guild
+        return False
+
+    def _normalize_domain(self, raw: str) -> Optional[str]:
+        text = (raw or "").strip().lower()
+        if not text:
+            return None
+        if text.startswith("http://") or text.startswith("https://"):
+            parsed = urlparse(text)
+            host = (parsed.hostname or "").lower()
+        else:
+            host = text.split("/")[0].split(":")[0].lower()
+        host = host.removeprefix("www.")
+        if "." not in host or " " in host:
+            return None
+        return host
+
+    def _build_security_embed(self, guild_id: int) -> discord.Embed:
+        settings = get_guild_settings(guild_id)
+        approved_domains = settings.get("approved_link_domains", [])
+        domain_preview = ", ".join(approved_domains[:8]) if approved_domains else "ไม่มี"
+        if len(approved_domains) > 8:
+            domain_preview += f" ... (+{len(approved_domains) - 8})"
+
+        guild = self.bot.get_guild(guild_id)
+        log_channel_id = settings.get("intercom_log_channel_id")
+        log_channel = guild.get_channel(log_channel_id) if guild and log_channel_id else None
+
+        embed = discord.Embed(title="🛡️ Intercom Security Control Panel", color=discord.Color.blurple())
+        embed.description = "กดปุ่มเพื่อเปิด/ปิดระบบ, ตั้ง Log, และจัดการโดเมนอนุมัติ"
+        embed.add_field(name="กันสแปม", value="✅ เปิด" if settings.get("anti_spam_enabled", True) else "❌ ปิด", inline=True)
+        embed.add_field(name="กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
+        embed.add_field(name="กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
+        embed.add_field(name="โดเมนที่อนุมัติ", value=domain_preview, inline=False)
+        embed.add_field(name="ห้อง Log", value=(log_channel.mention if log_channel else "ยังไม่ได้ตั้ง"), inline=False)
+        return embed
+
+    def _is_bot_admin(self, user_id: int) -> bool:
+        admin_cog = self.bot.get_cog("Admin")
+        if admin_cog:
+            if hasattr(admin_cog, "is_admin"):
+                return bool(admin_cog.is_admin(user_id))
+            if hasattr(admin_cog, "allowed_user_id"):
+                return str(user_id) == str(getattr(admin_cog, "allowed_user_id"))
+        return False
+
+    async def _send_security_log(self, guild_id: int, title: str, description: str, color: discord.Color):
+        settings = get_guild_settings(guild_id)
+        log_channel_id = settings.get("intercom_log_channel_id") or settings.get("intercom_channel_id")
+        if not log_channel_id:
+            return
+
+        channel = self.bot.get_channel(int(log_channel_id))
+        if not channel:
+            return
+
+        embed = discord.Embed(title=title, description=description, color=color, timestamp=datetime.utcnow())
+        try:
+            await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    def _source_key(self, guild_id: int, channel_id: int, message_id: int) -> str:
+        return f"{guild_id}:{channel_id}:{message_id}"
+
+    def _parse_source_key(self, key: str) -> tuple[int, int, int]:
+        gid, cid, mid = key.split(":")
+        return int(gid), int(cid), int(mid)
+
+    async def _delete_message_safely(self, channel_id: int, message_id: int) -> bool:
+        try:
+            channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+            if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.DMChannel)):
+                return False
+            msg = await channel.fetch_message(message_id)
+            await msg.delete()
+            return True
+        except Exception:
+            return False
+
+    def _find_source_keys_by_any_message_id(self, message_id: int) -> list[str]:
+        mapping = _load_message_map()
+        matched: list[str] = []
+        for source_key, relays in mapping.items():
+            try:
+                _, _, src_mid = self._parse_source_key(source_key)
+            except Exception:
+                continue
+            if src_mid == message_id:
+                matched.append(source_key)
+                continue
+            for relay in relays:
+                if int(relay.get("message_id", 0)) == message_id:
+                    matched.append(source_key)
+                    break
+        return matched
+
+    def _parse_message_reference(self, raw: str) -> tuple[Optional[int], Optional[int], int]:
+        value = raw.strip()
+        pattern = r"^https?://(?:ptb\.|canary\.)?discord\.com/channels/(\d+|@me)/(\d+)/(\d+)$"
+        match = re.match(pattern, value)
+        if match:
+            guild_raw, channel_raw, message_raw = match.groups()
+            guild_id = None if guild_raw == "@me" else int(guild_raw)
+            return guild_id, int(channel_raw), int(message_raw)
+
+        if value.isdigit():
+            return None, None, int(value)
+
+        raise ValueError("invalid_reference")
+
     # ──────────────────────────────────────
     # ⚙️ ADMIN SETUP
     # ──────────────────────────────────────
@@ -219,6 +372,8 @@ class ServerLink(commands.Cog):
             embed.add_field(name="🛡️ กันสแปม", value="✅ เปิด" if settings.get("anti_spam_enabled", True) else "❌ ปิด", inline=True)
             embed.add_field(name="🚫 กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
             embed.add_field(name="🔗 กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
+            log_channel = interaction.guild.get_channel(settings.get("intercom_log_channel_id")) if settings.get("intercom_log_channel_id") else None
+            embed.add_field(name="🧾 ห้อง Log", value=(log_channel.mention if log_channel else "ยังไม่ได้ตั้ง"), inline=False)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
@@ -308,101 +463,120 @@ class ServerLink(commands.Cog):
         update_guild_settings(interaction.guild_id, intercom_channel_id=interaction.channel_id)
         await interaction.response.send_message(f"✅ ตั้งค่า {interaction.channel.mention} เป็นห้อง Intercom เรียบร้อย!", ephemeral=True)
 
-    @app_commands.command(name="intercom_moderation", description="🛡️ ตั้งค่าระบบกันสแปม/คำไม่เหมาะสม/ลิงก์ของ Intercom")
+    @app_commands.command(name="intercom_security", description="🛡️ จัดการระบบความปลอดภัย Intercom แบบรวม (สแปม/คำไม่เหมาะสม/ลิงก์/log)")
     @app_commands.describe(
-        anti_spam="เปิด/ปิด ระบบกันสแปม",
-        content_filter="เปิด/ปิด ระบบกรองคำไม่เหมาะสม",
-        link_filter="เปิด/ปิด ระบบบล็อกลิงก์ที่ยังไม่อนุมัติ"
+        action="เลือกการทำงาน",
+        value="ใช้กับ approve/unapprove เช่น โดเมนหรือ URL",
+        enabled="ใช้กับ toggle_spam/toggle_content/toggle_link",
+        log_channel="ตั้งห้อง log สำหรับความปลอดภัย Intercom"
     )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="เปิดแผงควบคุมแบบปุ่มกด", value="panel"),
+        app_commands.Choice(name="ดูสถานะความปลอดภัย", value="status"),
+        app_commands.Choice(name="เปิด/ปิด กันสแปม", value="toggle_spam"),
+        app_commands.Choice(name="เปิด/ปิด กรองคำไม่เหมาะสม", value="toggle_content"),
+        app_commands.Choice(name="เปิด/ปิด กรองลิงก์", value="toggle_link"),
+        app_commands.Choice(name="อนุมัติโดเมนลิงก์", value="approve"),
+        app_commands.Choice(name="ถอนโดเมนลิงก์", value="unapprove"),
+        app_commands.Choice(name="ดูรายการโดเมนที่อนุมัติ", value="list"),
+        app_commands.Choice(name="ตั้งห้อง Log", value="set_log"),
+    ])
     @app_commands.default_permissions(manage_guild=True)
-    async def intercom_moderation(
+    async def intercom_security(
         self,
         interaction: discord.Interaction,
-        anti_spam: Optional[bool] = None,
-        content_filter: Optional[bool] = None,
-        link_filter: Optional[bool] = None,
+        action: app_commands.Choice[str],
+        value: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        log_channel: Optional[discord.TextChannel] = None,
     ):
         guild_id = interaction.guild_id
-        updates = {}
-        if anti_spam is not None:
-            updates["anti_spam_enabled"] = anti_spam
-        if content_filter is not None:
-            updates["content_filter_enabled"] = content_filter
-        if link_filter is not None:
-            updates["link_filter_enabled"] = link_filter
-
-        if updates:
-            update_guild_settings(guild_id, **updates)
-
         settings = get_guild_settings(guild_id)
-        approved_domains = settings.get("approved_link_domains", [])
-        domain_preview = ", ".join(approved_domains[:8]) if approved_domains else "ไม่มี"
-        if len(approved_domains) > 8:
-            domain_preview += f" ... (+{len(approved_domains) - 8})"
+        action_value = action.value
 
-        embed = discord.Embed(title="🛡️ Intercom Moderation", color=discord.Color.blurple())
-        embed.add_field(name="กันสแปม", value="✅ เปิด" if settings.get("anti_spam_enabled", True) else "❌ ปิด", inline=True)
-        embed.add_field(name="กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
-        embed.add_field(name="กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
-        embed.add_field(name="โดเมนที่อนุมัติ", value=domain_preview, inline=False)
+        if action_value == "panel":
+            embed = self._build_security_embed(guild_id)
+            view = IntercomSecurityView(self, guild_id, owner_user_id=interaction.user.id)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            return
+
+        if action_value == "toggle_spam":
+            if enabled is None:
+                await interaction.response.send_message("❌ กรุณาระบุค่า `enabled`", ephemeral=True)
+                return
+            update_guild_settings(guild_id, anti_spam_enabled=enabled)
+        elif action_value == "toggle_content":
+            if enabled is None:
+                await interaction.response.send_message("❌ กรุณาระบุค่า `enabled`", ephemeral=True)
+                return
+            update_guild_settings(guild_id, content_filter_enabled=enabled)
+        elif action_value == "toggle_link":
+            if enabled is None:
+                await interaction.response.send_message("❌ กรุณาระบุค่า `enabled`", ephemeral=True)
+                return
+            update_guild_settings(guild_id, link_filter_enabled=enabled)
+        elif action_value == "approve":
+            if not value:
+                await interaction.response.send_message("❌ กรุณาระบุโดเมนหรือ URL ใน `value`", ephemeral=True)
+                return
+            host = self._normalize_domain(value)
+            if not host:
+                await interaction.response.send_message("❌ รูปแบบโดเมนไม่ถูกต้อง", ephemeral=True)
+                return
+            approved = settings.get("approved_link_domains", [])
+            if host not in approved:
+                approved.append(host)
+                approved = sorted(set(approved))
+                update_guild_settings(guild_id, approved_link_domains=approved)
+                await self._send_security_log(
+                    guild_id,
+                    "✅ Intercom Link Approved",
+                    f"อนุมัติโดเมน `{host}` โดย {interaction.user.mention}",
+                    discord.Color.green()
+                )
+        elif action_value == "unapprove":
+            if not value:
+                await interaction.response.send_message("❌ กรุณาระบุโดเมนใน `value`", ephemeral=True)
+                return
+            host = self._normalize_domain(value)
+            if not host:
+                await interaction.response.send_message("❌ รูปแบบโดเมนไม่ถูกต้อง", ephemeral=True)
+                return
+            approved = settings.get("approved_link_domains", [])
+            approved = [d for d in approved if d != host]
+            update_guild_settings(guild_id, approved_link_domains=approved)
+            await self._send_security_log(
+                guild_id,
+                "🗑️ Intercom Link Removed",
+                f"ถอนโดเมน `{host}` โดย {interaction.user.mention}",
+                discord.Color.orange()
+            )
+        elif action_value == "set_log":
+            if not log_channel:
+                await interaction.response.send_message("❌ กรุณาเลือก `log_channel`", ephemeral=True)
+                return
+            update_guild_settings(guild_id, intercom_log_channel_id=log_channel.id)
+            await interaction.response.send_message(f"✅ ตั้งห้อง Log เป็น {log_channel.mention} แล้ว", ephemeral=True)
+            return
+        elif action_value == "list":
+            approved = settings.get("approved_link_domains", [])
+            if not approved:
+                await interaction.response.send_message("ℹ️ ยังไม่มีโดเมนที่อนุมัติ", ephemeral=True)
+                return
+            lines = [f"{index + 1}. `{domain}`" for index, domain in enumerate(approved[:40])]
+            if len(approved) > 40:
+                lines.append(f"... และอีก {len(approved) - 40} โดเมน")
+            await interaction.response.send_message("📃 โดเมนที่อนุมัติ:\n" + "\n".join(lines), ephemeral=True)
+            return
+
+        embed = self._build_security_embed(guild_id)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="intercom_approve_link", description="✅ อนุมัติโดเมนลิงก์ให้ส่งได้ใน Intercom")
-    @app_commands.describe(domain_or_url="ใส่โดเมนหรือ URL ที่ต้องการอนุมัติ เช่น discord.com หรือ https://youtube.com")
-    @app_commands.default_permissions(manage_guild=True)
-    async def intercom_approve_link(self, interaction: discord.Interaction, domain_or_url: str):
-        raw = domain_or_url.strip().lower()
-        if not raw:
-            await interaction.response.send_message("❌ กรุณาระบุโดเมนหรือ URL", ephemeral=True)
-            return
-
-        if raw.startswith("http://") or raw.startswith("https://"):
-            parsed = urlparse(raw)
-            host = (parsed.hostname or "").lower()
-        else:
-            host = raw.split("/")[0].split(":")[0].lower()
-
-        host = host.removeprefix("www.")
-        if "." not in host or " " in host:
-            await interaction.response.send_message("❌ รูปแบบโดเมนไม่ถูกต้อง", ephemeral=True)
-            return
-
-        settings = get_guild_settings(interaction.guild_id)
-        approved = settings.get("approved_link_domains", [])
-        if host not in approved:
-            approved.append(host)
-            approved = sorted(set(approved))
-            update_guild_settings(interaction.guild_id, approved_link_domains=approved)
-
-        await interaction.response.send_message(f"✅ อนุมัติโดเมนเรียบร้อย: `{host}`", ephemeral=True)
-
-    @app_commands.command(name="intercom_unapprove_link", description="🗑️ ถอนการอนุมัติโดเมนลิงก์ใน Intercom")
-    @app_commands.describe(domain="โดเมนที่ต้องการถอน เช่น youtube.com")
-    @app_commands.default_permissions(manage_guild=True)
-    async def intercom_unapprove_link(self, interaction: discord.Interaction, domain: str):
-        host = domain.strip().lower().removeprefix("www.")
-        settings = get_guild_settings(interaction.guild_id)
-        approved = settings.get("approved_link_domains", [])
-        if host not in approved:
-            await interaction.response.send_message(f"ℹ️ ไม่พบโดเมน `{host}` ในรายการที่อนุมัติ", ephemeral=True)
-            return
-
-        approved = [d for d in approved if d != host]
-        update_guild_settings(interaction.guild_id, approved_link_domains=approved)
-        await interaction.response.send_message(f"✅ ถอนการอนุมัติ `{host}` แล้ว", ephemeral=True)
-
-    @app_commands.command(name="intercom_list_links", description="📃 ดูรายชื่อโดเมนที่อนุมัติสำหรับ Intercom")
-    async def intercom_list_links(self, interaction: discord.Interaction):
-        settings = get_guild_settings(interaction.guild_id)
-        approved = settings.get("approved_link_domains", [])
-        if not approved:
-            await interaction.response.send_message("ℹ️ ยังไม่มีโดเมนที่อนุมัติ", ephemeral=True)
-            return
-
-        lines = [f"{index + 1}. `{domain}`" for index, domain in enumerate(approved[:40])]
-        if len(approved) > 40:
-            lines.append(f"... และอีก {len(approved) - 40} โดเมน")
-        await interaction.response.send_message("📃 โดเมนที่อนุมัติ:\n" + "\n".join(lines), ephemeral=True)
+    @app_commands.command(name="intercom_panel", description="🎛️ เปิดแผงควบคุม Intercom Security แบบปุ่มกด")
+    async def intercom_panel(self, interaction: discord.Interaction):
+        embed = self._build_security_embed(interaction.guild_id)
+        view = IntercomSecurityView(self, interaction.guild_id, owner_user_id=interaction.user.id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def server_id_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
         config = _load_config()
@@ -438,10 +612,17 @@ class ServerLink(commands.Cog):
                 await notice.delete()
             except Exception:
                 pass
+            await self._send_security_log(
+                message.guild.id,
+                "🚫 Intercom Message Blocked",
+                f"ผู้ใช้: {message.author.mention}\nเหตุผล: {reason}\nข้อความ: {message.content[:300]}",
+                discord.Color.orange()
+            )
             return
 
         # Global Broadcast (Mode 1)
         config = _load_config()
+        sent_records: list[dict[str, int]] = []
         for gid_str, data in config.items():
             if int(gid_str) == message.guild.id:
                 continue
@@ -456,18 +637,26 @@ class ServerLink(commands.Cog):
                             color=discord.Color.from_rgb(0, 150, 255),
                             timestamp=message.created_at
                         )
-                        embed.set_author(name=f"{message.author.name} • {message.guild.name}", icon_url=message.author.display_avatar.url)
-                        if message.guild.icon:
-                            embed.set_thumbnail(url=message.guild.icon.url)
-                        embed.set_footer(text=f"GID: {message.guild.id} | UID: {message.author.id}")
+                        self._apply_intercom_meta(embed, user=message.author, guild=message.guild)
                         
                         if message.attachments:
                             embed.set_image(url=message.attachments[0].url)
                         
                         try:
-                            await target_channel.send(embed=embed)
+                            sent = await target_channel.send(embed=embed)
+                            sent_records.append({
+                                "guild_id": int(gid_str),
+                                "channel_id": target_channel.id,
+                                "message_id": sent.id
+                            })
                         except Exception:
                             pass
+
+        if sent_records:
+            mapping = _load_message_map()
+            source_key = self._source_key(message.guild.id, message.channel.id, message.id)
+            mapping[source_key] = sent_records
+            _save_message_map(mapping)
 
     @app_commands.command(name="intercom_private", description="🌐 ส่งข้อความ Intercom เฉพาะเซิร์ฟเวอร์ที่เลือก (Directed Mode)")
     @app_commands.describe(server_id="เลือกเซิร์ฟเวอร์เป้าหมาย", message="ข้อความที่ต้องการส่ง")
@@ -481,6 +670,12 @@ class ServerLink(commands.Cog):
         is_ok, reason = self._validate_intercom_message(interaction.guild_id, interaction.user.id, message)
         if not is_ok:
             await interaction.response.send_message(reason, ephemeral=True)
+            await self._send_security_log(
+                interaction.guild_id,
+                "🚫 Intercom Private Blocked",
+                f"ผู้ใช้: {interaction.user.mention}\nเหตุผล: {reason}\nข้อความ: {message[:300]}",
+                discord.Color.orange()
+            )
             return
 
         target_guild = None
@@ -514,12 +709,15 @@ class ServerLink(commands.Cog):
             description=message,
             color=discord.Color.purple()
         )
-        embed.set_author(name=f"{interaction.user.name} • {interaction.guild.name}", icon_url=interaction.user.display_avatar.url)
-        if interaction.guild.icon:
-            embed.set_thumbnail(url=interaction.guild.icon.url)
-        embed.set_footer(text=f"GID: {interaction.guild.id} | UID: {interaction.user.id}")
+        self._apply_intercom_meta(embed, user=interaction.user, guild=interaction.guild)
         
         await target_channel.send(embed=embed)
+        await self._send_security_log(
+            interaction.guild_id,
+            "📨 Intercom Private Sent",
+            f"จาก {interaction.user.mention} ไปเซิร์ฟ `{target_guild.id}` ({target_guild.name})",
+            discord.Color.green()
+        )
         await interaction.response.send_message(f"✅ ส่งข้อความไปยัง {target_guild.name} เรียบร้อย!", ephemeral=True)
 
     @app_commands.command(name="intercom_dm", description="🌐 ส่งข้อความ DM ข้ามเซิร์ฟเวอร์ (หาจากรายชื่อสมาชิกในเซิร์ฟเวอร์อื่น)")
@@ -534,6 +732,12 @@ class ServerLink(commands.Cog):
         is_ok, reason = self._validate_intercom_message(interaction.guild_id, interaction.user.id, message)
         if not is_ok:
             await interaction.response.send_message(reason, ephemeral=True)
+            await self._send_security_log(
+                interaction.guild_id,
+                "🚫 Intercom DM Blocked",
+                f"ผู้ใช้: {interaction.user.mention}\nเหตุผล: {reason}\nข้อความ: {message[:300]}",
+                discord.Color.orange()
+            )
             return
 
         target_guild = None
@@ -575,14 +779,105 @@ class ServerLink(commands.Cog):
                 description=message,
                 color=discord.Color.green()
             )
-            embed.set_author(name=f"{interaction.user.name} • {interaction.guild.name}", icon_url=interaction.user.display_avatar.url)
-            if interaction.guild.icon:
-                embed.set_thumbnail(url=interaction.guild.icon.url)
-            embed.set_footer(text=f"GID: {interaction.guild.id} | UID: {interaction.user.id}")
+            self._apply_intercom_meta(embed, user=interaction.user, guild=interaction.guild)
             await target_member.send(embed=embed)
+            await self._send_security_log(
+                interaction.guild_id,
+                "📧 Intercom DM Sent",
+                f"จาก {interaction.user.mention} ไปหา `{target_member.id}` ในเซิร์ฟ `{target_guild.id}`",
+                discord.Color.green()
+            )
             await interaction.response.send_message(f"✅ ส่ง DM หา {target_member.name} สำเร็จ!", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ ส่ง DM ไม่สำเร็จ: {e}", ephemeral=True)
+
+    @app_commands.command(name="intercom_purge", description="🧹 ลบข้อความไม่เหมาะสมจากต้นทางและข้อความที่กระจายไปแล้ว (Bot Admin)")
+    @app_commands.describe(
+        link_or_id="ลิงก์ข้อความ Discord หรือ Message ID",
+        channel="ช่องของข้อความ (ใช้เมื่อใส่แค่ Message ID)"
+    )
+    async def intercom_purge(
+        self,
+        interaction: discord.Interaction,
+        link_or_id: str,
+        channel: Optional[discord.TextChannel] = None
+    ):
+        if not self._is_bot_admin(interaction.user.id):
+            await interaction.response.send_message("❌ คำสั่งนี้ใช้ได้เฉพาะแอดมินบอท", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            _, ref_channel_id, target_message_id = self._parse_message_reference(link_or_id)
+        except ValueError:
+            await interaction.followup.send("❌ รูปแบบไม่ถูกต้อง กรุณาใส่ลิงก์ข้อความหรือ Message ID")
+            return
+
+        source_keys = self._find_source_keys_by_any_message_id(target_message_id)
+        if not source_keys:
+            # fallback: ถ้าเป็นข้อความใหม่ที่ยังไม่เจอใน map ลองผูกด้วย channel ที่ระบุ
+            if ref_channel_id:
+                target_channel_id = ref_channel_id
+            elif channel:
+                target_channel_id = channel.id
+            elif interaction.channel and isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
+                target_channel_id = interaction.channel.id
+            else:
+                await interaction.followup.send("❌ ไม่พบ mapping ของข้อความนี้ และไม่สามารถระบุช่องได้")
+                return
+
+            fallback_key = self._source_key(interaction.guild_id, target_channel_id, target_message_id)
+            source_keys = [fallback_key]
+
+        mapping = _load_message_map()
+        deleted_total = 0
+        failed_total = 0
+        touched_sources = 0
+
+        for source_key in set(source_keys):
+            touched_sources += 1
+            try:
+                source_gid, source_cid, source_mid = self._parse_source_key(source_key)
+            except Exception:
+                continue
+
+            if await self._delete_message_safely(source_cid, source_mid):
+                deleted_total += 1
+            else:
+                failed_total += 1
+
+            relays = mapping.get(source_key, [])
+            for relay in relays:
+                relay_cid = int(relay.get("channel_id", 0))
+                relay_mid = int(relay.get("message_id", 0))
+                if relay_cid and relay_mid:
+                    if await self._delete_message_safely(relay_cid, relay_mid):
+                        deleted_total += 1
+                    else:
+                        failed_total += 1
+
+            if source_key in mapping:
+                del mapping[source_key]
+
+        _save_message_map(mapping)
+
+        await self._send_security_log(
+            interaction.guild_id,
+            "🧹 Intercom Purge Executed",
+            (
+                f"โดย: {interaction.user.mention}\n"
+                f"Sources: {touched_sources}\n"
+                f"ลบสำเร็จ: {deleted_total}\n"
+                f"ลบไม่สำเร็จ: {failed_total}\n"
+                f"Ref: `{target_message_id}`"
+            ),
+            discord.Color.red()
+        )
+
+        await interaction.followup.send(
+            f"✅ Purge เสร็จแล้ว | ลบสำเร็จ: `{deleted_total}` | ลบไม่สำเร็จ: `{failed_total}`"
+        )
 
     # ──────────────────────────────────────
     # 🔔 WEEKLY REMINDER (DM SERVER OWNERS)
@@ -658,6 +953,169 @@ class ReminderView(discord.ui.View):
         update_guild_settings(self.guild_id, remind_setup=False)
         await interaction.response.send_message("✅ รับทราบครับ! บอทจะไม่ส่งข้อความแจ้งเตือนตั้งค่าสำหรับเซิร์ฟเวอร์นี้อีก", ephemeral=True)
         self.stop()
+
+
+class DomainInputModal(discord.ui.Modal):
+    def __init__(self, cog: ServerLink, guild_id: int, mode: str):
+        title = "อนุมัติโดเมน" if mode == "approve" else "ถอนโดเมน"
+        super().__init__(title=title)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.mode = mode
+        self.domain_input = discord.ui.TextInput(
+            label="โดเมนหรือ URL",
+            placeholder="เช่น https://youtube.com หรือ discord.com",
+            required=True,
+            max_length=200
+        )
+        self.add_item(self.domain_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+
+        host = self.cog._normalize_domain(self.domain_input.value)
+        if not host:
+            await interaction.response.send_message("❌ รูปแบบโดเมนไม่ถูกต้อง", ephemeral=True)
+            return
+
+        settings = get_guild_settings(self.guild_id)
+        approved = settings.get("approved_link_domains", [])
+
+        if self.mode == "approve":
+            if host not in approved:
+                approved.append(host)
+                approved = sorted(set(approved))
+                update_guild_settings(self.guild_id, approved_link_domains=approved)
+            await self.cog._send_security_log(
+                self.guild_id,
+                "✅ Intercom Link Approved",
+                f"อนุมัติโดเมน `{host}` โดย {interaction.user.mention}",
+                discord.Color.green()
+            )
+            await interaction.response.send_message(f"✅ อนุมัติโดเมน `{host}` แล้ว", ephemeral=True)
+            return
+
+        approved = [d for d in approved if d != host]
+        update_guild_settings(self.guild_id, approved_link_domains=approved)
+        await self.cog._send_security_log(
+            self.guild_id,
+            "🗑️ Intercom Link Removed",
+            f"ถอนโดเมน `{host}` โดย {interaction.user.mention}",
+            discord.Color.orange()
+        )
+        await interaction.response.send_message(f"✅ ถอนโดเมน `{host}` แล้ว", ephemeral=True)
+
+
+class IntercomSecurityView(discord.ui.View):
+    def __init__(self, cog: ServerLink, guild_id: int, owner_user_id: int):
+        super().__init__(timeout=600)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.owner_user_id = owner_user_id
+        self._add_domain_remove_select()
+
+    def _add_domain_remove_select(self):
+        settings = get_guild_settings(self.guild_id)
+        approved = settings.get("approved_link_domains", [])
+        if not approved:
+            return
+        options = [discord.SelectOption(label=domain, value=domain) for domain in approved[:25]]
+        select = discord.ui.Select(
+            placeholder="เลือกโดเมนที่ต้องการถอน",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=3
+        )
+
+        async def _on_select(interaction: discord.Interaction):
+            if not self.cog._can_manage_intercom(interaction):
+                await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+                return
+            domain = select.values[0]
+            settings_now = get_guild_settings(self.guild_id)
+            approved_now = [d for d in settings_now.get("approved_link_domains", []) if d != domain]
+            update_guild_settings(self.guild_id, approved_link_domains=approved_now)
+            await self.cog._send_security_log(
+                self.guild_id,
+                "🗑️ Intercom Link Removed",
+                f"ถอนโดเมน `{domain}` โดย {interaction.user.mention}",
+                discord.Color.orange()
+            )
+            await self._refresh(interaction, f"✅ ถอนโดเมน `{domain}` แล้ว")
+
+        select.callback = _on_select
+        self.add_item(select)
+
+    async def _refresh(self, interaction: discord.Interaction, note: Optional[str] = None):
+        embed = self.cog._build_security_embed(self.guild_id)
+        if note:
+            embed.description = f"{embed.description}\n\n{note}"
+        await interaction.response.edit_message(embed=embed, view=IntercomSecurityView(self.cog, self.guild_id, self.owner_user_id))
+
+    @discord.ui.button(label="Toggle Spam", style=discord.ButtonStyle.blurple, row=0)
+    async def toggle_spam(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        settings = get_guild_settings(self.guild_id)
+        new_state = not settings.get("anti_spam_enabled", True)
+        update_guild_settings(self.guild_id, anti_spam_enabled=new_state)
+        await self._refresh(interaction, f"🛡️ กันสแปม: {'เปิด' if new_state else 'ปิด'}")
+
+    @discord.ui.button(label="Toggle Content", style=discord.ButtonStyle.blurple, row=0)
+    async def toggle_content(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        settings = get_guild_settings(self.guild_id)
+        new_state = not settings.get("content_filter_enabled", True)
+        update_guild_settings(self.guild_id, content_filter_enabled=new_state)
+        await self._refresh(interaction, f"🚫 กรองคำไม่เหมาะสม: {'เปิด' if new_state else 'ปิด'}")
+
+    @discord.ui.button(label="Toggle Link", style=discord.ButtonStyle.blurple, row=0)
+    async def toggle_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        settings = get_guild_settings(self.guild_id)
+        new_state = not settings.get("link_filter_enabled", True)
+        update_guild_settings(self.guild_id, link_filter_enabled=new_state)
+        await self._refresh(interaction, f"🔗 กรองลิงก์: {'เปิด' if new_state else 'ปิด'}")
+
+    @discord.ui.button(label="Use This Channel as Log", style=discord.ButtonStyle.green, row=1)
+    async def set_log_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        if not isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
+            await interaction.response.send_message("❌ ช่องนี้ไม่รองรับการตั้งเป็น Log", ephemeral=True)
+            return
+        update_guild_settings(self.guild_id, intercom_log_channel_id=interaction.channel.id)
+        await self._refresh(interaction, f"🧾 ตั้งห้อง Log เป็น {interaction.channel.mention} แล้ว")
+
+    @discord.ui.button(label="Approve Domain", style=discord.ButtonStyle.green, row=1)
+    async def approve_domain(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        await interaction.response.send_modal(DomainInputModal(self.cog, self.guild_id, "approve"))
+
+    @discord.ui.button(label="Unapprove Domain", style=discord.ButtonStyle.red, row=1)
+    async def unapprove_domain(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        await interaction.response.send_modal(DomainInputModal(self.cog, self.guild_id, "unapprove"))
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.gray, row=2)
+    async def refresh_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        await self._refresh(interaction, "🔄 รีเฟรชข้อมูลแล้ว")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerLink(bot))

@@ -20,7 +20,16 @@
         "ai_room_allowed": true,
         "cross_chat_enabled": true,
         "remind_setup": true,
-        "intercom_channel_id": 1487650552421814453
+        "intercom_channel_id": 1487650552421814453,
+        "approved_link_domains": [
+            "discord.com",
+            "discord.gg",
+            "giphy.com",
+            "github.com",
+            "roblox.com",
+            "youtu.be",
+            "youtube.com"
+        ]
     },
     "1275800992771997779": {
         "last_remind_time": "2026-03-29T10:08:03.166260"
@@ -37,7 +46,9 @@
         "ai_room_allowed": true,
         "cross_chat_enabled": true,
         "remind_setup": true,
-        "intercom_channel_id": 1485472415998804028
+        "intercom_channel_id": 1485472208095674498,
+        "anti_spam_enabled": true,
+        "content_filter_enabled": true
     },
     "1259494915881173014": {
         "last_remind_time": "2026-03-29T10:08:03.166260"
