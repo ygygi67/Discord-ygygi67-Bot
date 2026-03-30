@@ -86,7 +86,7 @@ class FileConverter(commands.Cog):
         return path
 
     def _build_ffmpeg_cmd(self, ffmpeg: str, input_path: str, output_path: str, source: str, target: str) -> list[str]:
-        cmd = [ffmpeg, "-y"]
+        cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
 
         if source in self.AUDIO_FORMATS and target in self.VIDEO_FORMATS:
             cmd += ["-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30", "-i", input_path, "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p"]

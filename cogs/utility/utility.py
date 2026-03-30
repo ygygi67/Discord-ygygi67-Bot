@@ -15,6 +15,7 @@ import shutil
 import re
 import csv
 import io
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import yt_dlp
 
 logger = logging.getLogger('discord_bot')
@@ -2044,20 +2045,63 @@ class Utility(commands.Cog):
                     except Exception:
                         pass
                     await asyncio.sleep(1.2)
+
+            def _normalize_youtube_single_url(input_url: str) -> str:
+                """บังคับให้ลิงก์ YouTube โหลดเฉพาะคลิปเดียว ลดปัญหาค้างเมื่อ playlist มีคลิปที่เปิดไม่ได้"""
+                try:
+                    parsed = urlparse(input_url)
+                    host = (parsed.netloc or "").lower()
+                    if "youtube.com" not in host and "youtu.be" not in host:
+                        return input_url
+
+                    if "youtu.be" in host:
+                        return input_url
+
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    if "v" in query and query["v"]:
+                        keep = {"v": query["v"][0]}
+                        if "t" in query and query["t"]:
+                            keep["t"] = query["t"][0]
+                        new_query = urlencode(keep)
+                        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+                    return input_url
+                except Exception:
+                    return input_url
+
+            def _clean_error_text(raw: str) -> str:
+                if not raw:
+                    return "unknown error"
+                # ลบ ANSI escape code ออกจาก error
+                cleaned = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", raw).strip()
+                return cleaned
             
             # ตั้งค่า yt-dlp
+            source_url = _normalize_youtube_single_url(url)
             ydl_opts = {
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'quiet': True,
                 'no_warnings': True,
                 'no_check_certificate': True,
                 'ignoreerrors': False,
+                'noplaylist': True,
+                'playlist_items': '1',
+                'extractor_retries': 2,
+                'retries': 3,
+                'fragment_retries': 3,
+                'skip_unavailable_fragments': True,
+                'geo_bypass': True,
+                'socket_timeout': 20,
                 'progress_hooks': [progress_hook],
             }
             
             if audio_only:
                 ydl_opts.update({
-                    'format': 'bestaudio/best',
+                    'format': 'bestaudio[acodec!=none]/bestaudio/best',
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web', 'ios']
+                        }
+                    },
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
                         'preferredcodec': 'mp3',
@@ -2066,14 +2110,20 @@ class Utility(commands.Cog):
                 })
             else:
                 ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best',
+                    # ไม่ lock เฉพาะ m4a เพื่อรองรับแทร็กเสียงหลายภาษา/หลาย codec ได้ดีขึ้น
+                    'format': 'bv*[vcodec!=none]+ba[acodec!=none]/b[ext=mp4]/b',
                     'merge_output_format': 'mp4',
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web', 'ios']
+                        }
+                    },
                 })
 
             # รัน yt-dlp ใน thread แยกเพื่อไม่ให้บล็อกบอท
             def run_ytdl():
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+                    info = ydl.extract_info(source_url, download=True)
                     filename = ydl.prepare_filename(info)
                     if audio_only:
                         filename = os.path.splitext(filename)[0] + '.mp3'
@@ -2093,13 +2143,21 @@ class Utility(commands.Cog):
                         await updater_task
                     except Exception:
                         pass
-                err_str = str(e)
+                err_str = _clean_error_text(str(e))
                 # ตรวจสอบ error message ที่รู้จัก
                 if 'Unsupported URL' in err_str:
                     return await interaction.edit_original_response(
                         content=f"❌ **URL นี้ไม่รองรับ**\n"
                                 f"อาจเป็น: รูปภาพ, Slideshow, หรือลิงก์ที่ yt-dlp ยังไม่รองรับ\n"
                                 f"`{err_str[:200]}`"
+                    )
+                if "This video is not available" in err_str:
+                    return await interaction.edit_original_response(
+                        content=(
+                            "❌ คลิปนี้ไม่สามารถเข้าถึงได้ (อาจโดนปิด/จำกัดประเทศ/ต้องล็อกอิน)\n"
+                            "💡 ลองใช้ลิงก์คลิปอื่น หรือลองเฉพาะโหมดเสียง (MP3)\n"
+                            f"`{err_str[:220]}`"
+                        )
                     )
                 return await interaction.edit_original_response(content=f"❌ เกิดข้อผิดพลาดในการโหลด: {err_str[:300]}")
 
