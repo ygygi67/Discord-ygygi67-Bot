@@ -63,6 +63,7 @@ def get_guild_settings(guild_id: int) -> dict:
         "content_filter_enabled": True,
         "link_filter_enabled": True,
         "approved_link_domains": DEFAULT_APPROVED_DOMAINS,
+        "custom_blocked_words": [],
         "intercom_log_channel_id": None,
     }
     guild_data = config.get(str(guild_id), {})
@@ -87,6 +88,7 @@ def update_guild_settings(guild_id: int, **kwargs):
             "content_filter_enabled": True,
             "link_filter_enabled": True,
             "approved_link_domains": list(DEFAULT_APPROVED_DOMAINS),
+            "custom_blocked_words": [],
             "intercom_log_channel_id": None,
         }
     config[gid_str].update(kwargs)
@@ -148,9 +150,14 @@ class ServerLink(commands.Cog):
                 continue
         return domains
 
-    def _contains_blocked_words(self, text: str) -> bool:
+    def _blocked_words_for_guild(self, guild_id: int) -> set[str]:
+        settings = get_guild_settings(guild_id)
+        custom_words = settings.get("custom_blocked_words") or []
+        return set(BLOCKED_WORDS) | {str(word).strip().lower() for word in custom_words if str(word).strip()}
+
+    def _contains_blocked_words(self, guild_id: int, text: str) -> bool:
         lowered = (text or "").lower()
-        return any(word in lowered for word in BLOCKED_WORDS)
+        return any(word in lowered for word in self._blocked_words_for_guild(guild_id))
 
     def _is_spam(self, guild_id: int, user_id: int) -> tuple[bool, str]:
         key = (guild_id, user_id)
@@ -180,7 +187,7 @@ class ServerLink(commands.Cog):
             if is_spam:
                 return False, reason
 
-        if settings.get("content_filter_enabled", True) and self._contains_blocked_words(text):
+        if settings.get("content_filter_enabled", True) and self._contains_blocked_words(guild_id, text):
             return False, "🚫 ข้อความนี้มีคำที่ไม่เหมาะสมและถูกบล็อกโดยระบบความปลอดภัย"
 
         if settings.get("link_filter_enabled", True):
@@ -192,7 +199,7 @@ class ServerLink(commands.Cog):
                     bad = ", ".join(sorted(set(unapproved))[:4])
                     return False, (
                         f"🔒 พบลิงก์ที่ยังไม่อนุมัติ: {bad}\n"
-                        f"ให้แอดมินใช้ `/intercom_approve_link` เพื่ออนุมัติโดเมนก่อน"
+                        f"ให้แอดมินใช้ `/intercom_security action:approve` เพื่ออนุมัติโดเมนก่อน"
                     )
 
         return True, ""
@@ -203,16 +210,36 @@ class ServerLink(commands.Cog):
         *,
         user: discord.abc.User,
         guild: discord.Guild,
+        source_message_id: Optional[int] = None,
     ) -> discord.Embed:
         embed.set_author(
             name=f"{user.name} • UID: {user.id}",
             icon_url=user.display_avatar.url
         )
         guild_icon = guild.icon.url if guild.icon else None
+        footer_text = f"GID: {guild.id}"
+        if source_message_id:
+            footer_text += f" | MID: {source_message_id}"
         embed.set_footer(
-            text=f"GID: {guild.id}",
+            text=footer_text,
             icon_url=guild_icon
         )
+        return embed
+
+    def _build_relay_embed(self, source_message: discord.Message) -> discord.Embed:
+        embed = discord.Embed(
+            description=source_message.content or "‎",
+            color=discord.Color.from_rgb(0, 150, 255),
+            timestamp=source_message.created_at
+        )
+        self._apply_intercom_meta(
+            embed,
+            user=source_message.author,
+            guild=source_message.guild,
+            source_message_id=source_message.id
+        )
+        if source_message.attachments:
+            embed.set_image(url=source_message.attachments[0].url)
         return embed
 
     def _can_manage_intercom(self, interaction: discord.Interaction) -> bool:
@@ -253,6 +280,11 @@ class ServerLink(commands.Cog):
         embed.add_field(name="กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
         embed.add_field(name="กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
         embed.add_field(name="โดเมนที่อนุมัติ", value=domain_preview, inline=False)
+        custom_words = settings.get("custom_blocked_words") or []
+        words_preview = ", ".join(custom_words[:8]) if custom_words else "ไม่มี"
+        if len(custom_words) > 8:
+            words_preview += f" ... (+{len(custom_words) - 8})"
+        embed.add_field(name="คำไม่เหมาะสม (กำหนดเอง)", value=words_preview, inline=False)
         embed.add_field(name="ห้อง Log", value=(log_channel.mention if log_channel else "ยังไม่ได้ตั้ง"), inline=False)
         return embed
 
@@ -479,6 +511,9 @@ class ServerLink(commands.Cog):
         app_commands.Choice(name="อนุมัติโดเมนลิงก์", value="approve"),
         app_commands.Choice(name="ถอนโดเมนลิงก์", value="unapprove"),
         app_commands.Choice(name="ดูรายการโดเมนที่อนุมัติ", value="list"),
+        app_commands.Choice(name="เพิ่มคำไม่เหมาะสม", value="add_badword"),
+        app_commands.Choice(name="ลบคำไม่เหมาะสม", value="remove_badword"),
+        app_commands.Choice(name="ดูรายการคำไม่เหมาะสม", value="list_badwords"),
         app_commands.Choice(name="ตั้งห้อง Log", value="set_log"),
     ])
     @app_commands.default_permissions(manage_guild=True)
@@ -558,6 +593,40 @@ class ServerLink(commands.Cog):
             update_guild_settings(guild_id, intercom_log_channel_id=log_channel.id)
             await interaction.response.send_message(f"✅ ตั้งห้อง Log เป็น {log_channel.mention} แล้ว", ephemeral=True)
             return
+        elif action_value == "add_badword":
+            if not value:
+                await interaction.response.send_message("❌ กรุณาระบุคำใน `value`", ephemeral=True)
+                return
+            bad_word = value.strip().lower()
+            settings_now = get_guild_settings(guild_id)
+            custom_words = settings_now.get("custom_blocked_words") or []
+            if bad_word not in custom_words:
+                custom_words.append(bad_word)
+                custom_words = sorted(set(custom_words))
+                update_guild_settings(guild_id, custom_blocked_words=custom_words)
+            await interaction.response.send_message(f"✅ เพิ่มคำไม่เหมาะสม `{bad_word}` แล้ว", ephemeral=True)
+            return
+        elif action_value == "remove_badword":
+            if not value:
+                await interaction.response.send_message("❌ กรุณาระบุคำใน `value`", ephemeral=True)
+                return
+            bad_word = value.strip().lower()
+            settings_now = get_guild_settings(guild_id)
+            custom_words = [word for word in (settings_now.get("custom_blocked_words") or []) if word != bad_word]
+            update_guild_settings(guild_id, custom_blocked_words=custom_words)
+            await interaction.response.send_message(f"✅ ลบคำ `{bad_word}` ออกจากรายการแล้ว", ephemeral=True)
+            return
+        elif action_value == "list_badwords":
+            settings_now = get_guild_settings(guild_id)
+            custom_words = settings_now.get("custom_blocked_words") or []
+            if not custom_words:
+                await interaction.response.send_message("ℹ️ ยังไม่มีคำไม่เหมาะสมแบบกำหนดเอง", ephemeral=True)
+                return
+            lines = [f"{index + 1}. `{word}`" for index, word in enumerate(custom_words[:40])]
+            if len(custom_words) > 40:
+                lines.append(f"... และอีก {len(custom_words) - 40} คำ")
+            await interaction.response.send_message("🚫 คำไม่เหมาะสม (กำหนดเอง):\n" + "\n".join(lines), ephemeral=True)
+            return
         elif action_value == "list":
             approved = settings.get("approved_link_domains", [])
             if not approved:
@@ -632,15 +701,7 @@ class ServerLink(commands.Cog):
                 if target_guild:
                     target_channel = target_guild.get_channel(data["intercom_channel_id"])
                     if target_channel:
-                        embed = discord.Embed(
-                            description=message.content,
-                            color=discord.Color.from_rgb(0, 150, 255),
-                            timestamp=message.created_at
-                        )
-                        self._apply_intercom_meta(embed, user=message.author, guild=message.guild)
-                        
-                        if message.attachments:
-                            embed.set_image(url=message.attachments[0].url)
+                        embed = self._build_relay_embed(message)
                         
                         try:
                             sent = await target_channel.send(embed=embed)
@@ -657,6 +718,59 @@ class ServerLink(commands.Cog):
             source_key = self._source_key(message.guild.id, message.channel.id, message.id)
             mapping[source_key] = sent_records
             _save_message_map(mapping)
+
+    @commands.Cog.listener()
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if after.author.bot or not after.guild:
+            return
+        if before.content == after.content and len(before.attachments) == len(after.attachments):
+            return
+
+        settings = get_guild_settings(after.guild.id)
+        if not settings["cross_chat_enabled"] or settings["intercom_channel_id"] != after.channel.id:
+            return
+
+        mapping = _load_message_map()
+        source_key = self._source_key(after.guild.id, after.channel.id, after.id)
+        relays = mapping.get(source_key)
+        if not relays:
+            return
+
+        is_ok, reason = self._validate_intercom_message(after.guild.id, after.author.id, after.content)
+        if not is_ok:
+            try:
+                await after.delete()
+            except Exception:
+                pass
+            await self._send_security_log(
+                after.guild.id,
+                "🚫 Intercom Edit Blocked",
+                f"ผู้ใช้: {after.author.mention}\nเหตุผล: {reason}\nข้อความ: {after.content[:300]}",
+                discord.Color.orange()
+            )
+            return
+
+        embed = self._build_relay_embed(after)
+        edited_count = 0
+        for relay in relays:
+            target_channel = self.bot.get_channel(int(relay.get("channel_id", 0)))
+            target_message_id = int(relay.get("message_id", 0))
+            if not target_channel or not target_message_id:
+                continue
+            try:
+                target_msg = await target_channel.fetch_message(target_message_id)
+                await target_msg.edit(embed=embed)
+                edited_count += 1
+            except Exception:
+                continue
+
+        if edited_count > 0:
+            await self._send_security_log(
+                after.guild.id,
+                "✏️ Intercom Message Updated",
+                f"ผู้ใช้: {after.author.mention}\nMID ต้นทาง: `{after.id}`\nอัปเดตปลายทาง: `{edited_count}` ข้อความ",
+                discord.Color.blue()
+            )
 
     @app_commands.command(name="intercom_private", description="🌐 ส่งข้อความ Intercom เฉพาะเซิร์ฟเวอร์ที่เลือก (Directed Mode)")
     @app_commands.describe(server_id="เลือกเซิร์ฟเวอร์เป้าหมาย", message="ข้อความที่ต้องการส่ง")
@@ -1008,6 +1122,74 @@ class DomainInputModal(discord.ui.Modal):
         await interaction.response.send_message(f"✅ ถอนโดเมน `{host}` แล้ว", ephemeral=True)
 
 
+class BadWordInputModal(discord.ui.Modal):
+    def __init__(self, cog: ServerLink, guild_id: int):
+        super().__init__(title="เพิ่มคำไม่เหมาะสม")
+        self.cog = cog
+        self.guild_id = guild_id
+        self.word_input = discord.ui.TextInput(
+            label="คำที่ต้องการบล็อก",
+            placeholder="พิมพ์คำที่ต้องการเพิ่ม",
+            required=True,
+            max_length=100
+        )
+        self.add_item(self.word_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+
+        bad_word = self.word_input.value.strip().lower()
+        if not bad_word:
+            await interaction.response.send_message("❌ กรุณากรอกคำที่ต้องการเพิ่ม", ephemeral=True)
+            return
+
+        settings = get_guild_settings(self.guild_id)
+        custom_words = settings.get("custom_blocked_words") or []
+        if bad_word not in custom_words:
+            custom_words.append(bad_word)
+            custom_words = sorted(set(custom_words))
+            update_guild_settings(self.guild_id, custom_blocked_words=custom_words)
+        await interaction.response.send_message(f"✅ เพิ่มคำไม่เหมาะสม `{bad_word}` แล้ว", ephemeral=True)
+
+
+class ConfirmRemoveView(discord.ui.View):
+    def __init__(self, cog: ServerLink, guild_id: int, kind: str, target_value: str):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.kind = kind
+        self.target_value = target_value
+
+    @discord.ui.button(label="ยืนยันลบ", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+
+        settings = get_guild_settings(self.guild_id)
+        if self.kind == "domain":
+            approved = [d for d in settings.get("approved_link_domains", []) if d != self.target_value]
+            update_guild_settings(self.guild_id, approved_link_domains=approved)
+            await self.cog._send_security_log(
+                self.guild_id,
+                "🗑️ Intercom Link Removed",
+                f"ถอนโดเมน `{self.target_value}` โดย {interaction.user.mention}",
+                discord.Color.orange()
+            )
+            await interaction.response.edit_message(content=f"✅ ถอนโดเมน `{self.target_value}` แล้ว", view=None)
+            return
+
+        custom_words = [w for w in settings.get("custom_blocked_words", []) if w != self.target_value]
+        update_guild_settings(self.guild_id, custom_blocked_words=custom_words)
+        await interaction.response.edit_message(content=f"✅ ลบคำไม่เหมาะสม `{self.target_value}` แล้ว", view=None)
+
+    @discord.ui.button(label="ยกเลิก", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="ยกเลิกการลบแล้ว", view=None)
+
+
 class IntercomSecurityView(discord.ui.View):
     def __init__(self, cog: ServerLink, guild_id: int, owner_user_id: int):
         super().__init__(timeout=600)
@@ -1015,6 +1197,7 @@ class IntercomSecurityView(discord.ui.View):
         self.guild_id = guild_id
         self.owner_user_id = owner_user_id
         self._add_domain_remove_select()
+        self._add_badword_remove_select()
 
     def _add_domain_remove_select(self):
         settings = get_guild_settings(self.guild_id)
@@ -1035,16 +1218,39 @@ class IntercomSecurityView(discord.ui.View):
                 await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
                 return
             domain = select.values[0]
-            settings_now = get_guild_settings(self.guild_id)
-            approved_now = [d for d in settings_now.get("approved_link_domains", []) if d != domain]
-            update_guild_settings(self.guild_id, approved_link_domains=approved_now)
-            await self.cog._send_security_log(
-                self.guild_id,
-                "🗑️ Intercom Link Removed",
-                f"ถอนโดเมน `{domain}` โดย {interaction.user.mention}",
-                discord.Color.orange()
+            await interaction.response.send_message(
+                f"⚠️ ยืนยันการถอนโดเมน `{domain}` ?",
+                ephemeral=True,
+                view=ConfirmRemoveView(self.cog, self.guild_id, "domain", domain)
             )
-            await self._refresh(interaction, f"✅ ถอนโดเมน `{domain}` แล้ว")
+
+        select.callback = _on_select
+        self.add_item(select)
+
+    def _add_badword_remove_select(self):
+        settings = get_guild_settings(self.guild_id)
+        words = settings.get("custom_blocked_words", [])
+        if not words:
+            return
+        options = [discord.SelectOption(label=word, value=word) for word in words[:25]]
+        select = discord.ui.Select(
+            placeholder="เลือกคำไม่เหมาะสมที่ต้องการลบ",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=4
+        )
+
+        async def _on_select(interaction: discord.Interaction):
+            if not self.cog._can_manage_intercom(interaction):
+                await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+                return
+            word = select.values[0]
+            await interaction.response.send_message(
+                f"⚠️ ยืนยันการลบคำ `{word}` ?",
+                ephemeral=True,
+                view=ConfirmRemoveView(self.cog, self.guild_id, "badword", word)
+            )
 
         select.callback = _on_select
         self.add_item(select)
@@ -1116,6 +1322,13 @@ class IntercomSecurityView(discord.ui.View):
             await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
             return
         await self._refresh(interaction, "🔄 รีเฟรชข้อมูลแล้ว")
+
+    @discord.ui.button(label="Add Bad Word", style=discord.ButtonStyle.red, row=2)
+    async def add_bad_word(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog._can_manage_intercom(interaction):
+            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์จัดการ Control Panel นี้", ephemeral=True)
+            return
+        await interaction.response.send_modal(BadWordInputModal(self.cog, self.guild_id))
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerLink(bot))

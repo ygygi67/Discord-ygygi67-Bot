@@ -29,6 +29,11 @@
             "roblox.com",
             "youtu.be",
             "youtube.com"
+        ],
+        "anti_spam_enabled": true,
+        "intercom_log_channel_id": 1467898137459949742,
+        "custom_blocked_words": [
+            "หี"
         ]
     },
     "1275800992771997779": {

@@ -1,89 +1,110 @@
-# ygygi67 Bot
+# 🌌 ygygi67 Bot — Distributed Discord Super Bot
 
-บอท Discord แบบครบเครื่องที่รวม AI, เพลง, ระบบข้ามเซิร์ฟเวอร์, เครื่องมือแอดมิน และระบบเสียงไว้ในโปรเจกต์เดียว  
-ออกแบบมาให้ใช้ได้ทั้งแบบเครื่องเดียว (standalone) และแบบกระจายงาน (master/worker)
+> บอท Discord สายครบเครื่องที่รวม **AI + Music + Intercom + Moderation + Voice Tools**  
+> ออกแบบให้รันได้ทั้งแบบเครื่องเดียว และแบบกระจายงานหลาย worker/shard สำหรับเซิร์ฟเวอร์ขนาดใหญ่ 🚀
 
-## Highlights
+---
 
-- AI Assistant พร้อมห้อง AI และการจดจำบริบท
-- Music + Voice Queue
-- Intercom คุยข้ามเซิร์ฟเวอร์
-- Security Control Panel แบบปุ่มกด
-- ถอดเสียงจากข้อความ Discord (ลิงก์/Message ID)
-- ระบบ log, stats, moderation และ automation พื้นฐาน
+## 🎯 Project Vision
 
-## Core Features
+`ygygi67 Bot` ถูกสร้างมาเพื่อให้ “เซิร์ฟเวอร์เดียวจบทุกงาน”  
+ไม่ต้องสลับหลายบอทให้วุ่นวาย ทั้งงานคุย, งานดูแล, งานเพลง, งานเชื่อมข้ามเซิร์ฟ, และงาน automation พื้นฐาน
 
-### 1) Intercom Cross-Server
+สิ่งที่โปรเจกต์นี้เน้น:
 
-- ส่งข้อความจากห้อง Intercom ของเซิร์ฟต้นทางไปหลายเซิร์ฟปลายทางอัตโนมัติ
-- รองรับส่งแบบเจาะจงเซิร์ฟ (`/intercom_private`) และข้ามเซิร์ฟแบบ DM (`/intercom_dm`)
-- แสดงข้อมูลผู้ส่ง/ต้นทางใน embed ได้แก่ `UID`, `GID`, และ `MID` (Source Message ID)
-- ถ้าแก้ไขข้อความต้นทาง ระบบจะแก้ไขข้อความปลายทางตาม
+- ⚡ **เร็วและเสถียร** ด้วยโครงสร้าง Distributed
+- 🧩 **ขยายต่อได้** ด้วย Cog-based architecture
+- 🛡️ **ปลอดภัยขึ้น** ด้วย Intercom Security Control Panel
+- 🎙️ **ใช้งานจริงได้** ด้วยระบบ Voice/TTS/Transcription
 
-### 2) Intercom Security
+---
 
+## ✨ Feature Showcase
+
+### 🤖 AI Assistant
+- ห้อง AI ส่วนตัวและโซน AI
+- จดจำบริบท/สรุปบทสนทนา
+- โหมดบุคลิก AI หลายรูปแบบ
+
+### 🎵 Music & Voice
+- เล่นเพลงและจัดคิว
+- สั่ง TTS ด้วย `/พูดตาม`
+- ถอดเสียงจากข้อความด้วย `/ถอดเสียงข้อความ`
+  - รองรับลิงก์ข้อความ Discord
+  - รองรับ Message ID + ระบุช่อง
+  - เลือกได้ว่าจะส่งไฟล์เสียงต้นฉบับกลับมาด้วยหรือไม่
+
+### 🌐 Intercom Cross-Server
+- Broadcast ข้ามเซิร์ฟเวอร์
+- ส่งแบบเจาะจงเซิร์ฟ (`/intercom_private`)
+- ส่ง DM ข้ามเซิร์ฟ (`/intercom_dm`)
+- รองรับ sync แก้ไขข้อความต้นทางไปปลายทาง
+- แสดง `UID / GID / MID` ในข้อความปลายทาง
+
+### 🎛️ Intercom Security Control Panel
 - กันสแปม
-- กรองคำไม่เหมาะสม (ทั้งค่าเริ่มต้นและคำเพิ่มเอง)
+- กรองคำไม่เหมาะสม (ค่าเริ่มต้น + เพิ่มคำเอง)
 - กรองลิงก์ด้วย allowlist
-- ตั้งห้อง log สำหรับเหตุการณ์ด้านความปลอดภัย
-- ลบข้อความต้นทางและข้อความที่กระจายไปแล้วด้วยคำสั่งเดียว (`/intercom_purge`)
+- ตั้งช่อง log เหตุการณ์ความปลอดภัย
+- ลบข้อความต้นทาง+ปลายทางด้วย `/intercom_purge`
 
-### 3) Voice & Transcription
+### 🛠️ Server Management
+- ชุดคำสั่ง admin/moderation
+- ระบบห้อง private chat
+- ระบบ status/stats/notification/logging
 
-- `/พูดตาม` สำหรับ TTS
-- `/ถอดเสียงข้อความ` รองรับ:
-  - ลิงก์ข้อความ Discord
-  - Message ID + ระบุช่อง
-  - ตัวเลือก `ส่งไฟล์ต้นฉบับ` เพื่อแนบไฟล์เสียงกลับมาพร้อมผลถอดเสียง
+---
 
-## Command Quick Reference
+## 🧭 Command Map (หมวดหลัก)
 
 ### Setup
-
 - `/setup_server`
 - `/intercom_setup`
 
 ### Intercom
-
-- `/intercom_panel` เปิดหน้า Control Panel แบบปุ่มกด
-- `/intercom_security` จัดการสถานะ/ลิงก์/คำไม่เหมาะสม/ห้อง log แบบรวม
+- `/intercom_panel`
+- `/intercom_security`
 - `/intercom_private`
 - `/intercom_dm`
 - `/intercom_purge`
 
 ### Voice
-
 - `/พูดตาม`
 - `/ถอดเสียงข้อความ`
 
-## Architecture Modes
+---
 
-| Mode | Use Case | Example |
-|------|----------|---------|
-| `standalone` | บอทเครื่องเดียว | `python bot.py` |
-| `master` | คุม shards / orchestration | `BOT_MODE=master python bot.py` |
-| `worker` | รับงานหนัก | `python worker_node.py` |
+## 🧠 Runtime Modes
 
-## Quick Start
+| Mode | เหมาะกับ | ตัวอย่างคำสั่ง |
+|------|----------|----------------|
+| `standalone` | เครื่องเดียว / เริ่มต้นเร็ว | `python bot.py` |
+| `master` | คุม shard/cluster | `BOT_MODE=master python bot.py` |
+| `worker` | รับงานหนักแยก process | `python worker_node.py` |
 
-### 1) Install
+---
+
+## ⚡ Quick Start
+
+### 1) Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2) Configure
+### 2) Configure environment
 
 ```bash
 copy .env.example .env
 ```
 
-กำหนดค่าอย่างน้อย:
+ค่าที่ต้องมีอย่างน้อย:
 
 - `DISCORD_TOKEN`
 - `APPLICATION_ID`
-- `DISCORD_GUILD_ID` (สำหรับ sync คำสั่งแบบเร็วตอนพัฒนา)
+- `DISCORD_GUILD_ID`
+
+> ถ้าใช้ถอดเสียง ต้องมี `ffmpeg` ใน PATH ด้วย
 
 ### 3) Run
 
@@ -91,30 +112,94 @@ copy .env.example .env
 python bot.py
 ```
 
-หรือรันแบบกระจายงาน:
+หรือรันแบบคลัสเตอร์:
 
 ```bash
 start_cluster.bat
 ```
 
-## Project Structure
+---
+
+## 🗂️ Project Structure (อัปเดตตามโครงจริง)
 
 ```text
-bot.py
-worker_node.py
-core/
-cogs/
-data/
-docs/
-logs/
+ygygi67 Bot/
+├─ bot.py
+├─ worker_node.py
+├─ start.bat
+├─ start_cluster.bat
+├─ RestartNow.bat.bat
+├─ requirements.txt
+├─ .env.example
+│
+├─ cogs/
+│  ├─ admin/
+│  │  ├─ admin.py
+│  │  ├─ moderation.py
+│  │  ├─ roles.py
+│  │  ├─ server_copier.py
+│  │  └─ sync_and_manage.py
+│  ├─ ai/
+│  │  └─ ai_discord_bot.py
+│  ├─ core/
+│  │  └─ base.py
+│  ├─ download_video/
+│  │  └─ download_video.py
+│  ├─ music/
+│  │  └─ music.py
+│  ├─ Roblox/
+│  │  └─ Followers.py
+│  ├─ utility/
+│  │  ├─ bot_notifications.py
+│  │  ├─ discovery.py
+│  │  ├─ maintenance.py
+│  │  ├─ modmail.py
+│  │  ├─ server_link.py
+│  │  ├─ server_logger.py
+│  │  ├─ stats.py
+│  │  ├─ status.py
+│  │  ├─ suggestion.py
+│  │  └─ utility.py
+│  └─ voice/
+│     └─ tts.py
+│
+├─ core/
+│  ├─ command_logger.py
+│  ├─ distributed_config.py
+│  ├─ shard_manager.py
+│  ├─ shared_queue.py
+│  ├─ shared_queue_sql.py
+│  ├─ sql_config.py
+│  └─ storage.py
+│
+├─ data/
+├─ docs/
+│  ├─ README.md
+│  └─ SETUP_GUIDE.md
+├─ scripts/
+├─ ffmpeg/
+├─ VoiceLoggerBot/
+├─ logs/            # runtime
+├─ exports/         # runtime
+├─ build/           # generated
+└─ dist/            # generated
 ```
 
-## Security Notes
+---
 
-- ห้าม commit `.env`
-- ถ้าใช้ระบบถอดเสียง ต้องมี `ffmpeg` ใน PATH
-- ควรตั้งห้อง log สำหรับ Intercom Security เสมอ
+## 🔐 Security & Ops Notes
 
-## License
+- อย่า commit `.env` เด็ดขาด
+- แนะนำตั้ง `intercom_log_channel_id` เพื่อ audit เหตุการณ์
+- โฟลเดอร์ `logs/`, `exports/`, `dist/`, `build/` เป็น output/runtime
+- ก่อน deploy ควรทดสอบคำสั่งสำคัญในเซิร์ฟเวอร์ staging
+
+---
+
+## 📄 License
 
 MIT
+
+---
+
+Made with ❤️ using `discord.py`
