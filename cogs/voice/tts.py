@@ -9,6 +9,7 @@ import logging
 import re
 import tempfile
 import speech_recognition as sr
+import io
 
 logger = logging.getLogger('discord_bot')
 
@@ -81,8 +82,11 @@ class TTSCommand(commands.Cog):
             self.bot.loop.create_task(self._play_next(guild_id))
 
     @app_commands.command(name="พูดตาม", description="สั่งให้บอทพูดข้อความที่คุณต้องการ (พิมพ์ยาวแค่ไหนก็ได้)")
-    @app_commands.describe(text="ข้อความที่ต้องการให้บอทพูด")
-    async def speak(self, interaction: discord.Interaction, text: str):
+    @app_commands.describe(
+        text="ข้อความที่ต้องการให้บอทพูด",
+        ส่งไฟล์เสียง="แนบไฟล์เสียงที่สร้างกลับมาในแชทด้วยหรือไม่"
+    )
+    async def speak(self, interaction: discord.Interaction, text: str, ส่งไฟล์เสียง: bool = False):
         """รับข้อความเสียงและสร้าง TTS"""
         
         # ตรวจสอบการเชื่อมต่อเสียง
@@ -124,7 +128,16 @@ class TTSCommand(commands.Cog):
             await self.tts_queue[guild.id].put((filename, text))
             
             # ตอบกลับ
-            await interaction.followup.send(f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}")
+            if ส่งไฟล์เสียง:
+                with open(filename, "rb") as audio_file:
+                    audio_bytes = audio_file.read()
+                preview_file = discord.File(io.BytesIO(audio_bytes), filename=f"tts_preview_{interaction.user.id}.mp3")
+                await interaction.followup.send(
+                    f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}",
+                    file=preview_file
+                )
+            else:
+                await interaction.followup.send(f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}")
             
             # ถ้าระบบไม่ได้เล่นอยู่ให้เริ่มเล่น
             if not self.is_playing.get(guild.id, False):
@@ -235,13 +248,15 @@ class TTSCommand(commands.Cog):
     )
     @app_commands.describe(
         ข้อความลิงก์หรือไอดี="วางลิงก์ข้อความ Discord หรือ Message ID",
-        ช่อง="เลือกช่องเมื่อใส่แค่ Message ID (ถ้าไม่ใส่จะใช้ช่องปัจจุบัน)"
+        ช่อง="เลือกช่องเมื่อใส่แค่ Message ID (ถ้าไม่ใส่จะใช้ช่องปัจจุบัน)",
+        ส่งไฟล์ต้นฉบับ="ให้บอทแนบไฟล์เสียงต้นฉบับกลับมาพร้อมผลถอดเสียงหรือไม่"
     )
     async def transcribe_message_audio(
         self,
         interaction: discord.Interaction,
         ข้อความลิงก์หรือไอดี: str,
         ช่อง: discord.TextChannel | None = None,
+        ส่งไฟล์ต้นฉบับ: bool = False,
     ):
         await interaction.response.defer(ephemeral=False)
 
@@ -284,7 +299,14 @@ class TTSCommand(commands.Cog):
             if len(output) > 1900:
                 output = output[:1890] + "..."
 
-            await interaction.followup.send(output)
+            if ส่งไฟล์ต้นฉบับ:
+                safe_name = attachment.filename or "source_audio"
+                await interaction.followup.send(
+                    output,
+                    file=discord.File(temp_input, filename=safe_name)
+                )
+            else:
+                await interaction.followup.send(output)
 
         except ValueError as error:
             code = str(error)

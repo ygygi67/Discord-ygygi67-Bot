@@ -1,122 +1,120 @@
-# 🤖 Discord Bot - Distributed Music & Management Bot
+# ygygi67 Bot
 
-บอท Discord แบบ Distributed ที่รองรับการทำงานหลายเครื่อง (Sharding + Clustering) พร้อมระบบประมวลผลงานหนักผ่าน Workers
+บอท Discord แบบครบเครื่องที่รวม AI, เพลง, ระบบข้ามเซิร์ฟเวอร์, เครื่องมือแอดมิน และระบบเสียงไว้ในโปรเจกต์เดียว  
+ออกแบบมาให้ใช้ได้ทั้งแบบเครื่องเดียว (standalone) และแบบกระจายงาน (master/worker)
 
-## ✨ Features
+## Highlights
 
-- 🎵 **Music Player** - เล่นเพลงจาก YouTube
-- 🎲 **Distributed System** - รองรับหลาย Shards และ Workers
-- 👥 **Server Management** - จัดการเซิร์ฟเวอร์อัตโนมัติ
-- 📊 **Statistics** - เก็บสถิติการใช้งาน
-- 📝 **Logging** - บันทึกทุกกิจกรรม
-- 🛡️ **Moderation** - ระบบจัดการเซิร์ฟเวอร์
-- 🌐 **Intercom Cross-Server** - คุยข้ามเซิร์ฟเวอร์พร้อมระบบความปลอดภัย
-- 🎛️ **Intercom Control Panel** - จัดการระบบกรอง/ลิงก์/Log แบบปุ่มกด
-- 🎙️ **Voice Transcription** - ถอดเสียงจากลิงก์ข้อความหรือ Message ID
+- AI Assistant พร้อมห้อง AI และการจดจำบริบท
+- Music + Voice Queue
+- Intercom คุยข้ามเซิร์ฟเวอร์
+- Security Control Panel แบบปุ่มกด
+- ถอดเสียงจากข้อความ Discord (ลิงก์/Message ID)
+- ระบบ log, stats, moderation และ automation พื้นฐาน
 
-## 🆕 Intercom & Voice Commands
+## Core Features
 
-### Intercom Security
+### 1) Intercom Cross-Server
+
+- ส่งข้อความจากห้อง Intercom ของเซิร์ฟต้นทางไปหลายเซิร์ฟปลายทางอัตโนมัติ
+- รองรับส่งแบบเจาะจงเซิร์ฟ (`/intercom_private`) และข้ามเซิร์ฟแบบ DM (`/intercom_dm`)
+- แสดงข้อมูลผู้ส่ง/ต้นทางใน embed ได้แก่ `UID`, `GID`, และ `MID` (Source Message ID)
+- ถ้าแก้ไขข้อความต้นทาง ระบบจะแก้ไขข้อความปลายทางตาม
+
+### 2) Intercom Security
+
+- กันสแปม
+- กรองคำไม่เหมาะสม (ทั้งค่าเริ่มต้นและคำเพิ่มเอง)
+- กรองลิงก์ด้วย allowlist
+- ตั้งห้อง log สำหรับเหตุการณ์ด้านความปลอดภัย
+- ลบข้อความต้นทางและข้อความที่กระจายไปแล้วด้วยคำสั่งเดียว (`/intercom_purge`)
+
+### 3) Voice & Transcription
+
+- `/พูดตาม` สำหรับ TTS
+- `/ถอดเสียงข้อความ` รองรับ:
+  - ลิงก์ข้อความ Discord
+  - Message ID + ระบุช่อง
+  - ตัวเลือก `ส่งไฟล์ต้นฉบับ` เพื่อแนบไฟล์เสียงกลับมาพร้อมผลถอดเสียง
+
+## Command Quick Reference
+
+### Setup
+
+- `/setup_server`
+- `/intercom_setup`
+
+### Intercom
 
 - `/intercom_panel` เปิดหน้า Control Panel แบบปุ่มกด
-- `/intercom_security action:panel` เปิด Control Panel ผ่านคำสั่งรวม
-- `/intercom_security action:approve value:<domain_or_url>` อนุมัติโดเมนลิงก์
-- `/intercom_security action:unapprove value:<domain_or_url>` ถอนโดเมน
-- `/intercom_security action:add_badword value:<word>` เพิ่มคำไม่เหมาะสม
-- `/intercom_security action:remove_badword value:<word>` ลบคำไม่เหมาะสม
-- `/intercom_security action:list_badwords` ดูรายการคำไม่เหมาะสมแบบกำหนดเอง
-- `/intercom_security action:set_log log_channel:<channel>` ตั้งห้อง Log
-
-ระบบรองรับ:
-- กันสแปม (rate limit)
-- กรองคำไม่เหมาะสม (คำมาตรฐาน + คำกำหนดเอง)
-- กรองลิงก์ด้วย allowlist
-- บันทึก Log เหตุการณ์ความปลอดภัย
-- ซิงก์แก้ไขข้อความต้นทางไปยังข้อความปลายทางที่ถูกกระจาย
-
-### Intercom Moderation
-
-- `/intercom_purge link_or_id:<message_link_or_id>` ลบข้อความต้นทาง + ข้อความที่กระจายไปแล้ว
+- `/intercom_security` จัดการสถานะ/ลิงก์/คำไม่เหมาะสม/ห้อง log แบบรวม
+- `/intercom_private`
+- `/intercom_dm`
+- `/intercom_purge`
 
 ### Voice
 
-- `/ถอดเสียงข้อความ ข้อความลิงก์หรือไอดี:<message_link_or_id> [ช่อง:<text_channel>]`
-- รองรับทั้งลิงก์ข้อความ Discord และ Message ID
-- ถอดเสียงจากไฟล์เสียง/voice message และตอบกลับเป็นข้อความ
+- `/พูดตาม`
+- `/ถอดเสียงข้อความ`
 
-## 🚀 Quick Start
+## Architecture Modes
 
-### 1. ติดตั้ง Dependencies
+| Mode | Use Case | Example |
+|------|----------|---------|
+| `standalone` | บอทเครื่องเดียว | `python bot.py` |
+| `master` | คุม shards / orchestration | `BOT_MODE=master python bot.py` |
+| `worker` | รับงานหนัก | `python worker_node.py` |
+
+## Quick Start
+
+### 1) Install
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. ตั้งค่า Environment
+### 2) Configure
+
 ```bash
 copy .env.example .env
-# แก้ไข .env ใส่ Discord Token ของคุณ
 ```
 
-### 3. รันบอท
-```bash
-# แบบปกติ (Standalone)
-python bot.py
+กำหนดค่าอย่างน้อย:
 
-# แบบมี Workers ช่วยประมวลผล
+- `DISCORD_TOKEN`
+- `APPLICATION_ID`
+- `DISCORD_GUILD_ID` (สำหรับ sync คำสั่งแบบเร็วตอนพัฒนา)
+
+### 3) Run
+
+```bash
+python bot.py
+```
+
+หรือรันแบบกระจายงาน:
+
+```bash
 start_cluster.bat
 ```
 
-## 🏗️ Architecture
+## Project Structure
 
-### โหมดการทำงาน
-
-| โหมด | ใช้สำหรับ | คำสั่ง |
-|------|----------|--------|
-| `standalone` | 1 เครื่อง, 1-50 เซิร์ฟเวอร์ | `python bot.py` |
-| `master` | หลาย Shards | `BOT_MODE=master python bot.py` |
-| `worker` | ประมวลผลงานหนัก | `python worker_node.py` |
-
-## 📁 Project Structure
-
-```
-DiscordBot/
-├── bot.py                 # Main Bot File
-├── worker_node.py         # Worker for heavy tasks
-├── shared_queue.py        # Task queue system
-├── shard_manager.py       # Sharding management
-├── distributed_config.py  # Configuration
-├── cogs/                  # Bot commands
-├── data/                  # Database & Storage
-├── logs/                  # Log files
-└── music/                 # Downloaded music
+```text
+bot.py
+worker_node.py
+core/
+cogs/
+data/
+docs/
+logs/
 ```
 
-## 🔧 Configuration
+## Security Notes
 
-### ไฟล์ .env
-```env
-DISCORD_TOKEN=your_token_here
-APPLICATION_ID=your_app_id
-DISCORD_GUILD_ID=your_guild_id
+- ห้าม commit `.env`
+- ถ้าใช้ระบบถอดเสียง ต้องมี `ffmpeg` ใน PATH
+- ควรตั้งห้อง log สำหรับ Intercom Security เสมอ
 
-# Distributed Settings
-BOT_MODE=standalone
-TOTAL_SHARDS=4
-CLUSTER_ID=0
-NUM_WORKERS=2
-```
+## License
 
-## ⚠️ Security
-
-- **อย่า commit ไฟล์ .env ที่มี Token**
-- **Token มีแค่ใน .env** - ลบแล้วบอทจะรันไม่ได้
-- ใช้ `.env.example` เป็น template
-
-## 📝 License
-
-MIT License
-
----
-
-Made with ❤️ using discord.py
- 
+MIT
