@@ -6,6 +6,9 @@ import os
 import logging
 import asyncio
 from datetime import datetime, timedelta
+import re
+from urllib.parse import urlparse
+from collections import defaultdict, deque
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -15,6 +18,18 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────
 _BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.normpath(os.path.join(_BASE, "..", "..", "data", "server_link_config.json"))
+URL_PATTERN = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
+BLOCKED_WORDS = {
+    "ควย", "เหี้ย", "สัส", "สัด", "fuck", "bitch", "nigger", "porn", "xxx"
+}
+DEFAULT_APPROVED_DOMAINS = [
+    "discord.com",
+    "discord.gg",
+    "youtube.com",
+    "youtu.be",
+    "github.com",
+    "roblox.com",
+]
 
 def _load_config() -> dict:
     try:
@@ -42,12 +57,16 @@ def get_guild_settings(guild_id: int) -> dict:
         "cross_chat_enabled": False,
         "intercom_channel_id": None,
         "remind_setup": True,
-        "last_remind_time": None
+        "last_remind_time": None,
+        "anti_spam_enabled": True,
+        "content_filter_enabled": True,
+        "link_filter_enabled": True,
+        "approved_link_domains": DEFAULT_APPROVED_DOMAINS,
     }
     guild_data = config.get(str(guild_id), {})
     for k, v in defaults.items():
         if k not in guild_data:
-            guild_data[k] = v
+            guild_data[k] = list(v) if isinstance(v, list) else v
     return guild_data
 
 def update_guild_settings(guild_id: int, **kwargs):
@@ -61,7 +80,11 @@ def update_guild_settings(guild_id: int, **kwargs):
             "cross_chat_enabled": False,
             "intercom_channel_id": None,
             "remind_setup": True,
-            "last_remind_time": None
+            "last_remind_time": None,
+            "anti_spam_enabled": True,
+            "content_filter_enabled": True,
+            "link_filter_enabled": True,
+            "approved_link_domains": list(DEFAULT_APPROVED_DOMAINS),
         }
     config[gid_str].update(kwargs)
     _save_config(config)
@@ -84,10 +107,75 @@ class ServerLink(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._spam_buckets: dict[tuple[int, int], deque[datetime]] = defaultdict(deque)
+        self._spam_cooldown_until: dict[tuple[int, int], datetime] = {}
         self.reminder_task.start()
 
     def cog_unload(self):
         self.reminder_task.cancel()
+
+    def _extract_domains(self, text: str) -> list[str]:
+        domains: list[str] = []
+        for url in URL_PATTERN.findall(text or ""):
+            try:
+                parsed = urlparse(url)
+                host = (parsed.hostname or "").lower()
+                if host.startswith("www."):
+                    host = host[4:]
+                if host:
+                    domains.append(host)
+            except Exception:
+                continue
+        return domains
+
+    def _contains_blocked_words(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        return any(word in lowered for word in BLOCKED_WORDS)
+
+    def _is_spam(self, guild_id: int, user_id: int) -> tuple[bool, str]:
+        key = (guild_id, user_id)
+        now = datetime.utcnow()
+
+        cooldown_until = self._spam_cooldown_until.get(key)
+        if cooldown_until and now < cooldown_until:
+            seconds = int((cooldown_until - now).total_seconds()) + 1
+            return True, f"⚠️ คุณส่งเร็วเกินไป กรุณารอ {seconds} วินาทีก่อนส่งอีกครั้ง"
+
+        bucket = self._spam_buckets[key]
+        while bucket and (now - bucket[0]).total_seconds() > 10:
+            bucket.popleft()
+
+        bucket.append(now)
+        if len(bucket) > 4:
+            self._spam_cooldown_until[key] = now + timedelta(seconds=20)
+            bucket.clear()
+            return True, "🚫 ตรวจพบสแปม: ส่งข้อความถี่เกินกำหนด (สูงสุด 4 ข้อความใน 10 วินาที)"
+        return False, ""
+
+    def _validate_intercom_message(self, guild_id: int, user_id: int, text: str) -> tuple[bool, str]:
+        settings = get_guild_settings(guild_id)
+
+        if settings.get("anti_spam_enabled", True):
+            is_spam, reason = self._is_spam(guild_id, user_id)
+            if is_spam:
+                return False, reason
+
+        if settings.get("content_filter_enabled", True) and self._contains_blocked_words(text):
+            return False, "🚫 ข้อความนี้มีคำที่ไม่เหมาะสมและถูกบล็อกโดยระบบความปลอดภัย"
+
+        if settings.get("link_filter_enabled", True):
+            domains = self._extract_domains(text)
+            if domains:
+                approved = set((settings.get("approved_link_domains") or []))
+                unapproved = [domain for domain in domains if domain not in approved]
+                if unapproved:
+                    bad = ", ".join(sorted(set(unapproved))[:4])
+                    return False, (
+                        f"🔒 พบลิงก์ที่ยังไม่อนุมัติ: {bad}\n"
+                        f"ให้แอดมินใช้ `/intercom_approve_link` เพื่ออนุมัติโดเมนก่อน"
+                    )
+
+        return True, ""
 
     # ──────────────────────────────────────
     # ⚙️ ADMIN SETUP
@@ -128,6 +216,9 @@ class ServerLink(commands.Cog):
             embed.add_field(name="🤖 AI Room Allowed", value="✅ ใช่" if settings["ai_room_allowed"] else "❌ ไม่", inline=True)
             embed.add_field(name="🌐 คุยข้ามเซิร์ฟ", value="✅ เปิด" if settings["cross_chat_enabled"] else "❌ ปิด", inline=True)
             embed.add_field(name="🔔 แจ้งเตือนตั้งค่า (Week)", value="✅ เปิด" if settings["remind_setup"] else "❌ ปิด", inline=True)
+            embed.add_field(name="🛡️ กันสแปม", value="✅ เปิด" if settings.get("anti_spam_enabled", True) else "❌ ปิด", inline=True)
+            embed.add_field(name="🚫 กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
+            embed.add_field(name="🔗 กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
@@ -217,6 +308,102 @@ class ServerLink(commands.Cog):
         update_guild_settings(interaction.guild_id, intercom_channel_id=interaction.channel_id)
         await interaction.response.send_message(f"✅ ตั้งค่า {interaction.channel.mention} เป็นห้อง Intercom เรียบร้อย!", ephemeral=True)
 
+    @app_commands.command(name="intercom_moderation", description="🛡️ ตั้งค่าระบบกันสแปม/คำไม่เหมาะสม/ลิงก์ของ Intercom")
+    @app_commands.describe(
+        anti_spam="เปิด/ปิด ระบบกันสแปม",
+        content_filter="เปิด/ปิด ระบบกรองคำไม่เหมาะสม",
+        link_filter="เปิด/ปิด ระบบบล็อกลิงก์ที่ยังไม่อนุมัติ"
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def intercom_moderation(
+        self,
+        interaction: discord.Interaction,
+        anti_spam: Optional[bool] = None,
+        content_filter: Optional[bool] = None,
+        link_filter: Optional[bool] = None,
+    ):
+        guild_id = interaction.guild_id
+        updates = {}
+        if anti_spam is not None:
+            updates["anti_spam_enabled"] = anti_spam
+        if content_filter is not None:
+            updates["content_filter_enabled"] = content_filter
+        if link_filter is not None:
+            updates["link_filter_enabled"] = link_filter
+
+        if updates:
+            update_guild_settings(guild_id, **updates)
+
+        settings = get_guild_settings(guild_id)
+        approved_domains = settings.get("approved_link_domains", [])
+        domain_preview = ", ".join(approved_domains[:8]) if approved_domains else "ไม่มี"
+        if len(approved_domains) > 8:
+            domain_preview += f" ... (+{len(approved_domains) - 8})"
+
+        embed = discord.Embed(title="🛡️ Intercom Moderation", color=discord.Color.blurple())
+        embed.add_field(name="กันสแปม", value="✅ เปิด" if settings.get("anti_spam_enabled", True) else "❌ ปิด", inline=True)
+        embed.add_field(name="กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
+        embed.add_field(name="กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
+        embed.add_field(name="โดเมนที่อนุมัติ", value=domain_preview, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="intercom_approve_link", description="✅ อนุมัติโดเมนลิงก์ให้ส่งได้ใน Intercom")
+    @app_commands.describe(domain_or_url="ใส่โดเมนหรือ URL ที่ต้องการอนุมัติ เช่น discord.com หรือ https://youtube.com")
+    @app_commands.default_permissions(manage_guild=True)
+    async def intercom_approve_link(self, interaction: discord.Interaction, domain_or_url: str):
+        raw = domain_or_url.strip().lower()
+        if not raw:
+            await interaction.response.send_message("❌ กรุณาระบุโดเมนหรือ URL", ephemeral=True)
+            return
+
+        if raw.startswith("http://") or raw.startswith("https://"):
+            parsed = urlparse(raw)
+            host = (parsed.hostname or "").lower()
+        else:
+            host = raw.split("/")[0].split(":")[0].lower()
+
+        host = host.removeprefix("www.")
+        if "." not in host or " " in host:
+            await interaction.response.send_message("❌ รูปแบบโดเมนไม่ถูกต้อง", ephemeral=True)
+            return
+
+        settings = get_guild_settings(interaction.guild_id)
+        approved = settings.get("approved_link_domains", [])
+        if host not in approved:
+            approved.append(host)
+            approved = sorted(set(approved))
+            update_guild_settings(interaction.guild_id, approved_link_domains=approved)
+
+        await interaction.response.send_message(f"✅ อนุมัติโดเมนเรียบร้อย: `{host}`", ephemeral=True)
+
+    @app_commands.command(name="intercom_unapprove_link", description="🗑️ ถอนการอนุมัติโดเมนลิงก์ใน Intercom")
+    @app_commands.describe(domain="โดเมนที่ต้องการถอน เช่น youtube.com")
+    @app_commands.default_permissions(manage_guild=True)
+    async def intercom_unapprove_link(self, interaction: discord.Interaction, domain: str):
+        host = domain.strip().lower().removeprefix("www.")
+        settings = get_guild_settings(interaction.guild_id)
+        approved = settings.get("approved_link_domains", [])
+        if host not in approved:
+            await interaction.response.send_message(f"ℹ️ ไม่พบโดเมน `{host}` ในรายการที่อนุมัติ", ephemeral=True)
+            return
+
+        approved = [d for d in approved if d != host]
+        update_guild_settings(interaction.guild_id, approved_link_domains=approved)
+        await interaction.response.send_message(f"✅ ถอนการอนุมัติ `{host}` แล้ว", ephemeral=True)
+
+    @app_commands.command(name="intercom_list_links", description="📃 ดูรายชื่อโดเมนที่อนุมัติสำหรับ Intercom")
+    async def intercom_list_links(self, interaction: discord.Interaction):
+        settings = get_guild_settings(interaction.guild_id)
+        approved = settings.get("approved_link_domains", [])
+        if not approved:
+            await interaction.response.send_message("ℹ️ ยังไม่มีโดเมนที่อนุมัติ", ephemeral=True)
+            return
+
+        lines = [f"{index + 1}. `{domain}`" for index, domain in enumerate(approved[:40])]
+        if len(approved) > 40:
+            lines.append(f"... และอีก {len(approved) - 40} โดเมน")
+        await interaction.response.send_message("📃 โดเมนที่อนุมัติ:\n" + "\n".join(lines), ephemeral=True)
+
     async def server_id_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
         config = _load_config()
         choices = []
@@ -239,6 +426,20 @@ class ServerLink(commands.Cog):
         if not settings["cross_chat_enabled"] or settings["intercom_channel_id"] != message.channel.id:
             return
 
+        is_ok, reason = self._validate_intercom_message(message.guild.id, message.author.id, message.content)
+        if not is_ok:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            try:
+                notice = await message.channel.send(f"{message.author.mention} {reason}")
+                await asyncio.sleep(8)
+                await notice.delete()
+            except Exception:
+                pass
+            return
+
         # Global Broadcast (Mode 1)
         config = _load_config()
         for gid_str, data in config.items():
@@ -255,7 +456,10 @@ class ServerLink(commands.Cog):
                             color=discord.Color.from_rgb(0, 150, 255),
                             timestamp=message.created_at
                         )
-                        embed.set_author(name=f"{message.author.name} [@{message.guild.name} | GID: {message.guild.id} | UID: {message.author.id}]", icon_url=message.author.display_avatar.url)
+                        embed.set_author(name=f"{message.author.name} • {message.guild.name}", icon_url=message.author.display_avatar.url)
+                        if message.guild.icon:
+                            embed.set_thumbnail(url=message.guild.icon.url)
+                        embed.set_footer(text=f"GID: {message.guild.id} | UID: {message.author.id}")
                         
                         if message.attachments:
                             embed.set_image(url=message.attachments[0].url)
@@ -272,6 +476,11 @@ class ServerLink(commands.Cog):
         settings = get_guild_settings(interaction.guild_id)
         if not settings["cross_chat_enabled"]:
             await interaction.response.send_message("❌ ระบบคุยข้ามเซิร์ฟเวอร์ยังไม่เปิดใช้งาน", ephemeral=True)
+            return
+
+        is_ok, reason = self._validate_intercom_message(interaction.guild_id, interaction.user.id, message)
+        if not is_ok:
+            await interaction.response.send_message(reason, ephemeral=True)
             return
 
         target_guild = None
@@ -305,7 +514,10 @@ class ServerLink(commands.Cog):
             description=message,
             color=discord.Color.purple()
         )
-        embed.set_author(name=f"{interaction.user.name} [@{interaction.guild.name} | GID: {interaction.guild.id} | UID: {interaction.user.id}]", icon_url=interaction.user.display_avatar.url)
+        embed.set_author(name=f"{interaction.user.name} • {interaction.guild.name}", icon_url=interaction.user.display_avatar.url)
+        if interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
+        embed.set_footer(text=f"GID: {interaction.guild.id} | UID: {interaction.user.id}")
         
         await target_channel.send(embed=embed)
         await interaction.response.send_message(f"✅ ส่งข้อความไปยัง {target_guild.name} เรียบร้อย!", ephemeral=True)
@@ -317,6 +529,11 @@ class ServerLink(commands.Cog):
         settings = get_guild_settings(interaction.guild_id)
         if not settings["cross_chat_enabled"]:
             await interaction.response.send_message("❌ ระบบข้ามเซิร์ฟเวอร์ปิดอยู่", ephemeral=True)
+            return
+
+        is_ok, reason = self._validate_intercom_message(interaction.guild_id, interaction.user.id, message)
+        if not is_ok:
+            await interaction.response.send_message(reason, ephemeral=True)
             return
 
         target_guild = None
@@ -358,7 +575,10 @@ class ServerLink(commands.Cog):
                 description=message,
                 color=discord.Color.green()
             )
-            embed.set_author(name=f"{interaction.user.name} [@{interaction.guild.name} | ID: {interaction.guild.id}]", icon_url=interaction.user.display_avatar.url)
+            embed.set_author(name=f"{interaction.user.name} • {interaction.guild.name}", icon_url=interaction.user.display_avatar.url)
+            if interaction.guild.icon:
+                embed.set_thumbnail(url=interaction.guild.icon.url)
+            embed.set_footer(text=f"GID: {interaction.guild.id} | UID: {interaction.user.id}")
             await target_member.send(embed=embed)
             await interaction.response.send_message(f"✅ ส่ง DM หา {target_member.name} สำเร็จ!", ephemeral=True)
         except Exception as e:
