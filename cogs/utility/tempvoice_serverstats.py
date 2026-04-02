@@ -56,6 +56,111 @@ def _format_room_name(template: str, member: discord.Member, room_no: int) -> st
     return name[:100]
 
 
+class _TemplateModal(discord.ui.Modal):
+    def __init__(self, title: str, field_label: str, callback_fn, default_value: str = ""):
+        super().__init__(title=title)
+        self.callback_fn = callback_fn
+        self.template_input = discord.ui.TextInput(label=field_label, default=default_value, required=True, max_length=100)
+        self.add_item(self.template_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.callback_fn(interaction, str(self.template_input))
+
+
+class TempVoicePanelView(discord.ui.View):
+    def __init__(self, cog: "TempVoiceServerStats", owner_id: int):
+        super().__init__(timeout=900)
+        self.cog = cog
+        self.owner_id = owner_id
+
+    async def _owner(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ แผงนี้เป็นของคนที่เปิดคำสั่งเท่านั้น", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="⚡ สร้าง TempVoice อัตโนมัติ", style=discord.ButtonStyle.success)
+    async def auto_create(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._owner(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = interaction.guild
+        category = await guild.create_category("🎧 TempVoice")
+        lobby = await guild.create_voice_channel("➕ สร้างห้องเสียง", category=category)
+        self.cog.config["tempvoice"][str(guild.id)] = {
+            "category_id": category.id,
+            "lobby_channel_id": lobby.id,
+            "room_template": "🔊 {display} #{num}",
+            "room_counter": 0,
+        }
+        _save_config(self.cog.config)
+        await interaction.followup.send(f"✅ สร้างแล้ว\n📂 `{category.name}`\n🚪 ล๊อบบี้: {lobby.mention}", ephemeral=True)
+
+    @discord.ui.button(label="🏷️ ตั้ง Template ชื่อห้อง", style=discord.ButtonStyle.secondary)
+    async def set_template(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._owner(interaction):
+            return
+        cfg = self.cog._get_tv_cfg(interaction.guild.id)
+        default_value = cfg.get("room_template", "🔊 {display} #{num}")
+
+        async def _save(inter: discord.Interaction, template: str):
+            cfg2 = self.cog._get_tv_cfg(inter.guild.id)
+            if not cfg2:
+                return await inter.response.send_message("❌ ยังไม่ได้ตั้งค่า TempVoice", ephemeral=True)
+            cfg2["room_template"] = template
+            self.cog.config["tempvoice"][str(inter.guild.id)] = cfg2
+            _save_config(self.cog.config)
+            await inter.response.send_message(f"✅ อัปเดต Template แล้ว: `{template}`", ephemeral=True)
+
+        await interaction.response.send_modal(_TemplateModal("ตั้งชื่อ TempVoice", "Template ({display}/{user}/{num})", _save, default_value))
+
+
+class ServerStatsPanelView(discord.ui.View):
+    def __init__(self, cog: "TempVoiceServerStats", owner_id: int):
+        super().__init__(timeout=900)
+        self.cog = cog
+        self.owner_id = owner_id
+
+    async def _owner(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ แผงนี้เป็นของคนที่เปิดคำสั่งเท่านั้น", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="👥 ตั้งชื่อผู้ใช้", style=discord.ButtonStyle.primary)
+    async def set_humans(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._owner(interaction):
+            return
+        cfg = self.cog._get_ss_cfg(interaction.guild.id)
+        default_value = cfg.get("humans_template", "👥 ผู้ใช้: {count}")
+
+        async def _save(inter: discord.Interaction, template: str):
+            await self.cog._apply_serverstats(inter.guild, None, None, humans_template=template)
+            await inter.response.send_message("✅ อัปเดตชื่อช่องผู้ใช้แล้ว", ephemeral=True)
+
+        await interaction.response.send_modal(_TemplateModal("ตั้งชื่อช่องผู้ใช้", "Template ({count})", _save, default_value))
+
+    @discord.ui.button(label="🤖 ตั้งชื่อบอท", style=discord.ButtonStyle.primary)
+    async def set_bots(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._owner(interaction):
+            return
+        cfg = self.cog._get_ss_cfg(interaction.guild.id)
+        default_value = cfg.get("bots_template", "🤖 บอท: {count}")
+
+        async def _save(inter: discord.Interaction, template: str):
+            await self.cog._apply_serverstats(inter.guild, None, None, bots_template=template)
+            await inter.response.send_message("✅ อัปเดตชื่อช่องบอทแล้ว", ephemeral=True)
+
+        await interaction.response.send_modal(_TemplateModal("ตั้งชื่อช่องบอท", "Template ({count})", _save, default_value))
+
+    @discord.ui.button(label="🔄 รีเฟรชตัวเลข", style=discord.ButtonStyle.secondary)
+    async def refresh(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._owner(interaction):
+            return
+        await self.cog._ensure_serverstats_update(interaction.guild)
+        await interaction.response.send_message("✅ รีเฟรชตัวเลขแล้ว", ephemeral=True)
+
+
 class TempVoiceServerStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -74,6 +179,38 @@ class TempVoiceServerStats(commands.Cog):
 
     def _get_ss_cfg(self, guild_id: int) -> dict:
         return self.config["serverstats"].get(str(guild_id), {})
+
+    async def _lock_counter_channel(self, channel: discord.VoiceChannel):
+        try:
+            await channel.set_permissions(channel.guild.default_role, connect=False, speak=False)
+        except Exception as e:
+            logger.warning(f"Failed to lock counter channel {channel.id}: {e}")
+
+    async def _apply_serverstats(
+        self,
+        guild: discord.Guild,
+        humans_channel: Optional[discord.VoiceChannel],
+        bots_channel: Optional[discord.VoiceChannel],
+        humans_template: Optional[str] = None,
+        bots_template: Optional[str] = None,
+    ):
+        cfg = self._get_ss_cfg(guild.id)
+        if humans_channel:
+            cfg["humans_channel_id"] = humans_channel.id
+            await self._lock_counter_channel(humans_channel)
+        if bots_channel:
+            cfg["bots_channel_id"] = bots_channel.id
+            await self._lock_counter_channel(bots_channel)
+        if humans_template:
+            cfg["humans_template"] = humans_template if "{count}" in humans_template else f"{humans_template} {{count}}"
+        if bots_template:
+            cfg["bots_template"] = bots_template if "{count}" in bots_template else f"{bots_template} {{count}}"
+        cfg.setdefault("humans_template", "👥 ผู้ใช้: {count}")
+        cfg.setdefault("bots_template", "🤖 บอท: {count}")
+        self.config["serverstats"][str(guild.id)] = cfg
+        _save_config(self.config)
+        await self._ensure_serverstats_update(guild)
+        return cfg
 
     async def _ensure_serverstats_update(self, guild: discord.Guild):
         cfg = self._get_ss_cfg(guild.id)
@@ -163,6 +300,7 @@ class TempVoiceServerStats(commands.Cog):
     @app_commands.command(name="ตั้งค่า_serverstats", description="ตั้งค่าช่องนับจำนวนผู้ใช้และบอทอัตโนมัติ")
     @app_commands.describe(
         โหมด="โหมดการตั้งค่า",
+        หมวดหมู่="หมวดที่ต้องการให้สร้างช่อง (กรณีโหมดสร้างอัตโนมัติ)",
         ช่องผู้ใช้="เลือกช่องผู้ใช้ (ใช้เมื่อโหมด=ใช้ช่องที่มีอยู่)",
         ช่องบอท="เลือกช่องบอท (ใช้เมื่อโหมด=ใช้ช่องที่มีอยู่)"
     )
@@ -175,7 +313,8 @@ class TempVoiceServerStats(commands.Cog):
     async def setup_serverstats(
         self,
         interaction: discord.Interaction,
-        โหมด: str,
+        โหมด: Optional[str] = None,
+        หมวดหมู่: Optional[discord.CategoryChannel] = None,
         ช่องผู้ใช้: Optional[discord.VoiceChannel] = None,
         ช่องบอท: Optional[discord.VoiceChannel] = None,
     ):
@@ -183,6 +322,22 @@ class TempVoiceServerStats(commands.Cog):
             return await interaction.response.send_message("❌ ต้องมีสิทธิ์ Administrator", ephemeral=True)
         if not interaction.guild:
             return await interaction.response.send_message("❌ ใช้ได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
+
+        if not โหมด:
+            embed = discord.Embed(
+                title="📊 ServerStats Panel",
+                description=(
+                    "เลือกวิธีตั้งค่าได้ 2 แบบ:\n"
+                    "• อัตโนมัติ: บอทสร้างให้ครบ\n"
+                    "• ใช้ช่องที่มีอยู่: เลือกเฉพาะช่องผู้ใช้หรือช่องบอทอย่างใดอย่างหนึ่งก็ได้\n\n"
+                    "หลังตั้งค่าแล้ว บอทจะอัปเดตเฉพาะตัวเลขอัตโนมัติ และล็อกไม่ให้คนเข้าใช้งาน"
+                ),
+                color=discord.Color.blurple(),
+            )
+            view = ServerStatsPanelView(self, interaction.user.id)
+            return await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
         guild = interaction.guild
         humans = sum(1 for m in guild.members if not m.bot)
@@ -192,7 +347,7 @@ class TempVoiceServerStats(commands.Cog):
         bots_template = "🤖 บอท: {count}"
 
         if โหมด == "auto_create":
-            category = discord.utils.get(guild.categories, name="📊 Server Stats")
+            category = หมวดหมู่ or discord.utils.get(guild.categories, name="📊 Server Stats")
             if not category:
                 category = await guild.create_category("📊 Server Stats")
 
@@ -204,21 +359,31 @@ class TempVoiceServerStats(commands.Cog):
                 name=_format_counter_name(bots_template, bots),
                 category=category
             )
+            await self._apply_serverstats(guild, humans_ch, bots_ch, humans_template, bots_template)
+            return await interaction.followup.send(
+                f"✅ ตั้งค่า ServerStats สำเร็จแล้ว\n"
+                f"📂 หมวด: `{category.name}`\n"
+                f"👥 ผู้ใช้: {humans_ch.mention}\n"
+                f"🤖 บอท: {bots_ch.mention}",
+                ephemeral=True
+            )
         else:
-            if not ช่องผู้ใช้ or not ช่องบอท:
-                return await interaction.response.send_message("❌ โหมดนี้ต้องระบุ `ช่องผู้ใช้` และ `ช่องบอท`", ephemeral=True)
-            humans_ch = ช่องผู้ใช้
-            bots_ch = ช่องบอท
+            existing = self._get_ss_cfg(guild.id)
+            humans_ch = ช่องผู้ใช้ or (guild.get_channel(existing.get("humans_channel_id")) if existing.get("humans_channel_id") else None)
+            bots_ch = ช่องบอท or (guild.get_channel(existing.get("bots_channel_id")) if existing.get("bots_channel_id") else None)
 
-        self.config["serverstats"][str(guild.id)] = {
-            "humans_channel_id": humans_ch.id,
-            "bots_channel_id": bots_ch.id,
-            "humans_template": humans_template,
-            "bots_template": bots_template,
-        }
-        _save_config(self.config)
-        await self._ensure_serverstats_update(guild)
-        await interaction.response.send_message("✅ ตั้งค่า ServerStats สำเร็จแล้ว", ephemeral=True)
+            if not ช่องผู้ใช้ and not ช่องบอท:
+                return await interaction.followup.send("❌ โหมดนี้ต้องระบุอย่างน้อย `ช่องผู้ใช้` หรือ `ช่องบอท`", ephemeral=True)
+            if not humans_ch and not bots_ch:
+                return await interaction.followup.send("❌ ไม่พบช่องสำหรับตั้งค่า", ephemeral=True)
+
+            await self._apply_serverstats(guild, humans_ch if isinstance(humans_ch, discord.VoiceChannel) else None, bots_ch if isinstance(bots_ch, discord.VoiceChannel) else None)
+            tagged = []
+            if isinstance(humans_ch, discord.VoiceChannel):
+                tagged.append(f"👥 ผู้ใช้: {humans_ch.mention}")
+            if isinstance(bots_ch, discord.VoiceChannel):
+                tagged.append(f"🤖 บอท: {bots_ch.mention}")
+            await interaction.followup.send("✅ อัปเดต ServerStats แล้ว\n" + "\n".join(tagged), ephemeral=True)
 
     @app_commands.command(name="ตั้งชื่อ_serverstats", description="แก้ข้อความหน้าตัวเลขของช่องนับผู้ใช้/บอท")
     @app_commands.describe(
@@ -231,7 +396,7 @@ class TempVoiceServerStats(commands.Cog):
             app_commands.Choice(name="บอท", value="bots"),
         ]
     )
-    async def set_serverstats_prefix(self, interaction: discord.Interaction, ชนิด: str, ข้อความหน้าเลข: str):
+    async def set_serverstats_prefix(self, interaction: discord.Interaction, ชนิด: Optional[str] = None, ข้อความหน้าเลข: Optional[str] = None):
         if not self._is_admin(interaction):
             return await interaction.response.send_message("❌ ต้องมีสิทธิ์ Administrator", ephemeral=True)
         if not interaction.guild:
@@ -240,6 +405,26 @@ class TempVoiceServerStats(commands.Cog):
         cfg = self._get_ss_cfg(interaction.guild.id)
         if not cfg:
             return await interaction.response.send_message("❌ ยังไม่ได้ตั้งค่า ServerStats", ephemeral=True)
+
+        if not ชนิด or not ข้อความหน้าเลข:
+            humans_ch = interaction.guild.get_channel(cfg.get("humans_channel_id")) if cfg.get("humans_channel_id") else None
+            bots_ch = interaction.guild.get_channel(cfg.get("bots_channel_id")) if cfg.get("bots_channel_id") else None
+            embed = discord.Embed(
+                title="🧩 ServerStats Name Panel",
+                description=(
+                    "คำสั่งนี้ใช้ได้ 2 แบบ:\n"
+                    "1) แบบ Panel: เรียก `/ตั้งชื่อ_serverstats` เพื่อดูค่าปัจจุบัน\n"
+                    "2) แบบตั้งค่า: ใส่ `ชนิด` + `ข้อความหน้าเลข`\n\n"
+                    "ตัวแปรที่ใช้ได้: `{count}`"
+                ),
+                color=discord.Color.blurple(),
+            )
+            embed.add_field(name="ช่องผู้ใช้", value=humans_ch.mention if isinstance(humans_ch, discord.VoiceChannel) else "ยังไม่ตั้งค่า", inline=False)
+            embed.add_field(name="ช่องบอท", value=bots_ch.mention if isinstance(bots_ch, discord.VoiceChannel) else "ยังไม่ตั้งค่า", inline=False)
+            embed.add_field(name="Template ผู้ใช้", value=cfg.get("humans_template", "👥 ผู้ใช้: {count}"), inline=False)
+            embed.add_field(name="Template บอท", value=cfg.get("bots_template", "🤖 บอท: {count}"), inline=False)
+            view = ServerStatsPanelView(self, interaction.user.id)
+            return await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
         template = ข้อความหน้าเลข.strip()
         if "{count}" not in template:
@@ -252,7 +437,15 @@ class TempVoiceServerStats(commands.Cog):
         self.config["serverstats"][str(interaction.guild.id)] = cfg
         _save_config(self.config)
         await self._ensure_serverstats_update(interaction.guild)
-        await interaction.response.send_message("✅ อัปเดตชื่อ ServerStats แล้ว", ephemeral=True)
+        ss = self._get_ss_cfg(interaction.guild.id)
+        humans_ch = interaction.guild.get_channel(ss.get("humans_channel_id")) if ss.get("humans_channel_id") else None
+        bots_ch = interaction.guild.get_channel(ss.get("bots_channel_id")) if ss.get("bots_channel_id") else None
+        tagged = []
+        if isinstance(humans_ch, discord.VoiceChannel):
+            tagged.append(f"👥 {humans_ch.mention}")
+        if isinstance(bots_ch, discord.VoiceChannel):
+            tagged.append(f"🤖 {bots_ch.mention}")
+        await interaction.response.send_message("✅ อัปเดตชื่อ ServerStats แล้ว\n" + ("\n".join(tagged) if tagged else ""), ephemeral=True)
 
     @app_commands.command(name="ตั้งค่า_tempvoice", description="ตั้งค่าระบบ TempVoice")
     @app_commands.describe(
@@ -270,7 +463,7 @@ class TempVoiceServerStats(commands.Cog):
     async def setup_tempvoice(
         self,
         interaction: discord.Interaction,
-        โหมด: str,
+        โหมด: Optional[str] = None,
         หมวดหมู่: Optional[discord.CategoryChannel] = None,
         ห้องล๊อบบี้: Optional[discord.VoiceChannel] = None,
         รูปแบบชื่อห้อง: str = "🔊 {display} #{num}",
@@ -280,13 +473,30 @@ class TempVoiceServerStats(commands.Cog):
         if not interaction.guild:
             return await interaction.response.send_message("❌ ใช้ได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
 
+        if not โหมด:
+            embed = discord.Embed(
+                title="🎧 TempVoice Panel",
+                description=(
+                    "ระบบพร้อมใช้งาน ✅\n\n"
+                    "โหมดแนะนำ:\n"
+                    "• ให้บอทสร้างหมวดและล๊อบบี้อัตโนมัติ\n"
+                    "• หรือเลือกหมวด+ล๊อบบี้เอง\n\n"
+                    "Template ชื่อห้องรองรับ `{display}` `{user}` `{num}`"
+                ),
+                color=discord.Color.blurple(),
+            )
+            view = TempVoicePanelView(self, interaction.user.id)
+            return await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         guild = interaction.guild
         if โหมด == "auto_create":
-            category = await guild.create_category("🎧 TempVoice")
+            category = หมวดหมู่ or await guild.create_category("🎧 TempVoice")
             lobby = await guild.create_voice_channel("➕ สร้างห้องเสียง", category=category)
         else:
             if not หมวดหมู่ or not ห้องล๊อบบี้:
-                return await interaction.response.send_message("❌ โหมดนี้ต้องระบุ `หมวดหมู่` และ `ห้องล๊อบบี้`", ephemeral=True)
+                return await interaction.followup.send("❌ โหมดนี้ต้องระบุ `หมวดหมู่` และ `ห้องล๊อบบี้`", ephemeral=True)
             category = หมวดหมู่
             lobby = ห้องล๊อบบี้
 
@@ -297,7 +507,7 @@ class TempVoiceServerStats(commands.Cog):
             "room_counter": 0,
         }
         _save_config(self.config)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ ตั้งค่า TempVoice สำเร็จ\nล๊อบบี้: {lobby.mention}\nหมวด: `{category.name}`",
             ephemeral=True
         )

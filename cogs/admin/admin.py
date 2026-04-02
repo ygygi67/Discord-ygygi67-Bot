@@ -794,11 +794,17 @@ class Admin(commands.Cog):
                     
                     if playing_guilds:
                         current_song = playing_guilds[0].voice_client.source.title if hasattr(playing_guilds[0].voice_client.source, 'title') else "ไม่ทราบชื่อเพลง"
-                    embed.add_field(
+                        embed.add_field(
+                                name="🎵 เพลงที่กำลังเล่น",
+                                value=f"**{current_song}**\nใน **{len(playing_guilds)}** เซิร์ฟเวอร์",
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
                             name="🎵 เพลงที่กำลังเล่น",
-                            value=f"**{current_song}**\nใน **{len(playing_guilds)}** เซิร์ฟเวอร์",
-                        inline=False
-                    )
+                            value="ไม่มีเพลงที่กำลังเล่นอยู่ในขณะนี้",
+                            inline=False
+                        )
             except Exception as e:
                 logger.error(f"Error getting music stats: {e}")
             
