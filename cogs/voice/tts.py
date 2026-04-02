@@ -10,8 +10,28 @@ import re
 import tempfile
 import speech_recognition as sr
 import io
+from typing import Optional
 
 logger = logging.getLogger('discord_bot')
+
+def _resolve_primary_guild_id() -> Optional[int]:
+    env_gid = os.getenv("DISCORD_GUILD_ID")
+    if env_gid and env_gid.strip().isdigit():
+        return int(env_gid)
+
+    data_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data"))
+    if os.path.isdir(data_dir):
+        for name in os.listdir(data_dir):
+            m = re.match(r"^(\d{15,21})_", name)
+            if m:
+                return int(m.group(1))
+    return None
+
+def _guild_scope_decorator():
+    guild_id = _resolve_primary_guild_id()
+    if guild_id:
+        return app_commands.guilds(discord.Object(id=guild_id))
+    return lambda f: f
 
 class TTSCommand(commands.Cog):
     def __init__(self, bot):
@@ -82,6 +102,7 @@ class TTSCommand(commands.Cog):
             self.bot.loop.create_task(self._play_next(guild_id))
 
     @app_commands.command(name="พูดตาม", description="สั่งให้บอทพูดข้อความที่คุณต้องการ (พิมพ์ยาวแค่ไหนก็ได้)")
+    @_guild_scope_decorator()
     @app_commands.describe(
         text="ข้อความที่ต้องการให้บอทพูด",
         ส่งไฟล์เสียง="แนบไฟล์เสียงที่สร้างกลับมาในแชทด้วยหรือไม่"
@@ -246,6 +267,7 @@ class TTSCommand(commands.Cog):
         name="ถอดเสียงข้อความ",
         description="ถอดเสียงจากข้อความที่มีไฟล์เสียง (รองรับลิงก์หรือ Message ID)"
     )
+    @_guild_scope_decorator()
     @app_commands.describe(
         ข้อความลิงก์หรือไอดี="วางลิงก์ข้อความ Discord หรือ Message ID",
         ช่อง="เลือกช่องเมื่อใส่แค่ Message ID (ถ้าไม่ใส่จะใช้ช่องปัจจุบัน)",

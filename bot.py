@@ -6,6 +6,7 @@ import logging
 import asyncio
 import json
 import sys
+import re
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
@@ -44,6 +45,22 @@ def setup_logging():
     return logging.getLogger('discord_bot')
 
 logger = setup_logging()
+
+def resolve_primary_guild_id() -> str | None:
+    """Resolve guild ID from env; fallback to data filename prefix."""
+    guild_id = os.getenv('DISCORD_GUILD_ID')
+    if guild_id and guild_id.strip().isdigit():
+        return guild_id.strip()
+
+    data_dir = os.path.join(BASE_DIR, "data")
+    if not os.path.isdir(data_dir):
+        return None
+
+    for name in os.listdir(data_dir):
+        m = re.match(r"^(\d{15,21})_", name)
+        if m:
+            return m.group(1)
+    return None
 
 class DiscordLogHandler(logging.Handler):
     """Custom logging handler to send warnings/errors to Discord with batching"""
@@ -125,13 +142,25 @@ class AlphaBotBase:
             
         # Synchronize Slash Commands
         try:
-            guild_id = os.getenv('DISCORD_GUILD_ID')
+            guild_id = resolve_primary_guild_id()
             commands_list = []
             if guild_id and guild_id.strip():
                 guild = discord.Object(id=int(guild_id))
-                self.tree.copy_global_to(guild=guild)
-                commands_list = await self.tree.sync(guild=guild)
-                logger.info(f"Tree synced to guild: {guild_id}")
+                # 1) sync global ตามปกติ
+                global_cmds = await self.tree.sync()
+                logger.info(f"Global tree synced ({len(global_cmds)} commands)")
+
+                # 2) sync เฉพาะ guild-scoped commands (ไม่ copy global ไป guild เพื่อลดปัญหาเกิน 100)
+                guild_cmds = await self.tree.sync(guild=guild)
+                logger.info(f"Guild tree synced to {guild_id} ({len(guild_cmds)} guild commands)")
+
+                # รวมสำหรับแสดงผล log
+                merged = {}
+                for c in global_cmds:
+                    merged[c.name] = c
+                for c in guild_cmds:
+                    merged[c.name] = c
+                commands_list = list(merged.values())
             else:
                 commands_list = await self.tree.sync()
                 logger.info("Global tree synced")
@@ -236,6 +265,12 @@ class AlphaBotBase:
         if message.author.bot: return
         await self.process_commands(message)
 
+    async def on_disconnect(self):
+        logger.warning("🔌 Discord gateway disconnected. Waiting for reconnect...")
+
+    async def on_resumed(self):
+        logger.info("♻️ Discord gateway session resumed successfully")
+
 class AlphaBot(AlphaBotBase, commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
@@ -281,21 +316,51 @@ def run_bot():
         logger.error("Error: TOKEN is not set in .env file.")
         sys.exit(1)
 
-    if is_standalone():
-        logger.info("🤖 Starting Standalone Mode")
-        bot = AlphaBot()
-    else:
-        logger.info(f"🤖 Starting {dcfg.BOT_MODE.upper()} Mode")
-        bot = DistributedAlphaBot()
-    
-    async def main():
-        async with bot:
-            await bot.start(TOKEN)
+    async def run_with_watchdog():
+        attempt = 0
+        base_delay = 3
+        max_delay = 120
+
+        while True:
+            attempt += 1
+            bot = None
+            try:
+                if is_standalone():
+                    logger.info("🤖 Starting Standalone Mode")
+                    bot = AlphaBot()
+                else:
+                    logger.info(f"🤖 Starting {dcfg.BOT_MODE.upper()} Mode")
+                    bot = DistributedAlphaBot()
+
+                async with bot:
+                    await bot.start(TOKEN)
+
+                # ปกติ start() จะไม่หลุดออกมาถ้าไม่มีเหตุปิดบอท
+                logger.warning("⚠️ bot.start() exited unexpectedly. Restarting...")
+                raise RuntimeError("bot.start exited unexpectedly")
+
+            except KeyboardInterrupt:
+                logger.info("🛑 Shutdown requested by user")
+                return
+            except (discord.GatewayNotFound, discord.ConnectionClosed, OSError, ConnectionResetError, asyncio.TimeoutError) as e:
+                delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+                logger.warning(f"🌐 Network/Gateway error: {e}. Reconnecting in {delay}s (attempt {attempt})")
+                await asyncio.sleep(delay)
+            except Exception as e:
+                delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+                logger.error(f"💥 Fatal runtime error: {e}. Restarting in {delay}s (attempt {attempt})")
+                await asyncio.sleep(delay)
+            finally:
+                if bot and not bot.is_closed():
+                    try:
+                        await bot.close()
+                    except Exception:
+                        pass
 
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt: pass
-    except Exception as e: logger.error(f"Fatal error: {e}")
+        asyncio.run(run_with_watchdog())
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
     run_bot()

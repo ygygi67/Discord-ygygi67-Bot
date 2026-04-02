@@ -2325,4 +2325,17 @@ class MemberHelpView(discord.ui.View):
 
 async def setup(bot):
     """Add the cog to the bot"""
+    guild_id = os.getenv("DISCORD_GUILD_ID")
+    if guild_id and guild_id.strip().isdigit():
+        await bot.add_cog(Utility(bot), guild=discord.Object(id=int(guild_id)))
+        return
+
+    data_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data"))
+    if os.path.isdir(data_dir):
+        for name in os.listdir(data_dir):
+            m = re.match(r"^(\d{15,21})_", name)
+            if m:
+                await bot.add_cog(Utility(bot), guild=discord.Object(id=int(m.group(1))))
+                return
+
     await bot.add_cog(Utility(bot))

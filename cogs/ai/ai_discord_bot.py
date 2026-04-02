@@ -19,11 +19,25 @@ import os
 import asyncio
 import aiohttp
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 from cogs.utility.server_link import get_guild_settings
 
 logger = logging.getLogger(__name__)
+
+def _guild_scope_decorator():
+    guild_id = os.getenv("DISCORD_GUILD_ID")
+    if guild_id and guild_id.strip().isdigit():
+        return app_commands.guilds(discord.Object(id=int(guild_id)))
+
+    data_dir = os.path.normpath(os.path.join(_BASE, "..", "..", "data"))
+    if os.path.isdir(data_dir):
+        for name in os.listdir(data_dir):
+            m = re.match(r"^(\d{15,21})_", name)
+            if m:
+                return app_commands.guilds(discord.Object(id=int(m.group(1))))
+    return lambda x: x
 
 # ─────────────────────────────────────────
 # CONFIG
@@ -317,6 +331,95 @@ async def call_ai(session: aiohttp.ClientSession, prompt: str) -> str:
         return f"❌ เรียก AI ไม่ได้: {e}"
 
 
+class AIChatModal(discord.ui.Modal, title="💬 คุยกับ AI"):
+    prompt = discord.ui.TextInput(label="ข้อความ", style=discord.TextStyle.paragraph, required=True, max_length=1800)
+
+    def __init__(self, cog: "AIBot"):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        reply = await self.cog._process_chat(
+            str(interaction.user.id),
+            interaction.user.display_name,
+            str(self.prompt),
+        )
+        chunks = self.cog._split(reply)
+        await interaction.followup.send(chunks[0], ephemeral=True)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
+
+
+class AIModeSelect(discord.ui.Select):
+    def __init__(self, cog: "AIBot"):
+        self.cog = cog
+        options = [discord.SelectOption(label=v["label"], value=k) for k, v in PERSONALITIES.items()]
+        super().__init__(placeholder="🎭 เลือกโหมด AI", options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.cog.ai_mode.callback(self.cog, interaction, self.values[0])
+
+
+class AIMemorySelect(discord.ui.Select):
+    def __init__(self, cog: "AIBot"):
+        self.cog = cog
+        options = [
+            discord.SelectOption(label="👁️ ดูความจำ", value="view"),
+            discord.SelectOption(label="📜 ดูสรุปบทสนทนา", value="summary"),
+            discord.SelectOption(label="🗑️ ลบความจำทั้งหมด", value="clear"),
+        ]
+        super().__init__(placeholder="🧠 Memory Actions", options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.cog.ai_memory.callback(self.cog, interaction, self.values[0])
+
+
+class AIPanelView(discord.ui.View):
+    def __init__(self, cog: "AIBot", owner_id: int):
+        super().__init__(timeout=900)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.add_item(AIModeSelect(cog))
+        self.add_item(AIMemorySelect(cog))
+
+    async def _check_owner(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ แผงนี้เป็นของผู้เรียกคำสั่งเท่านั้น", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="💬 คุย AI", style=discord.ButtonStyle.primary)
+    async def btn_chat(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        await interaction.response.send_modal(AIChatModal(self.cog))
+
+    @discord.ui.button(label="📌 Toggle AI Zone", style=discord.ButtonStyle.secondary)
+    async def btn_zone(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        await self.cog.ai_setchannel.callback(self.cog, interaction, None)
+
+    @discord.ui.button(label="📋 ดู AI Zones", style=discord.ButtonStyle.secondary)
+    async def btn_zones(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        await self.cog.ai_listchannels.callback(self.cog, interaction)
+
+    @discord.ui.button(label="🏠 สร้างห้องส่วนตัว", style=discord.ButtonStyle.success)
+    async def btn_create_room(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        await self.cog.ai_myroom.callback(self.cog, interaction)
+
+    @discord.ui.button(label="🗑️ ลบห้องส่วนตัว", style=discord.ButtonStyle.danger)
+    async def btn_delete_room(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        await self.cog.ai_deleteroom.callback(self.cog, interaction)
+
+
 # ═══════════════════════════════════════════════════════
 # 🎮 COG
 # ═══════════════════════════════════════════════════════
@@ -419,6 +522,7 @@ class AIBot(commands.Cog):
     # ──────────────────────────────────────
     # SLASH: /ai
     # ──────────────────────────────────────
+    @_guild_scope_decorator()
     @app_commands.command(name="ai", description="💬 คุยกับ AI โมสต์ (มีความจำระยะยาว)")
     @app_commands.describe(ข้อความ="พิมพ์ข้อความที่ต้องการถามหรือคุย")
     async def ai_chat(self, interaction: discord.Interaction, ข้อความ: str):
@@ -449,6 +553,7 @@ class AIBot(commands.Cog):
     # 📌 AI CHANNEL ZONE COMMANDS
     # ══════════════════════════════════════
 
+    @_guild_scope_decorator()
     @app_commands.command(
         name="ai_setchannel",
         description="📌 กำหนด/ยกเลิกห้องนี้เป็น AI Zone (บอทจะตอบทุกข้อความอัตโนมัติ)"
@@ -497,6 +602,7 @@ class AIBot(commands.Cog):
             )
         await interaction.response.send_message(embed=embed)
 
+    @_guild_scope_decorator()
     @app_commands.command(
         name="ai_listchannels",
         description="📋 ดูรายการห้อง AI Zone ในเซิร์ฟเวอร์นี้"
@@ -532,6 +638,7 @@ class AIBot(commands.Cog):
     # 🏠 PERSONAL AI ROOM COMMANDS
     # ══════════════════════════════════════
 
+    @_guild_scope_decorator()
     @app_commands.command(
         name="ai_myroom",
         description="🏠 สร้างห้องคุย AI ส่วนตัวของคุณ (มองเห็นแค่คุณกับบอท)"
@@ -665,6 +772,7 @@ class AIBot(commands.Cog):
     # ──────────────────────────────────────
     # /ai_deleteroom — ลบห้องส่วนตัว
     # ──────────────────────────────────────
+    @_guild_scope_decorator()
     @app_commands.command(
         name="ai_deleteroom",
         description="🗑️ ลบห้อง AI ส่วนตัวของคุณ"
@@ -709,6 +817,7 @@ class AIBot(commands.Cog):
     # ──────────────────────────────────────
     # /ai_rooms_list — (Admin) ดูห้องทั้งหมด
     # ──────────────────────────────────────
+    @_guild_scope_decorator()
     @app_commands.command(
         name="ai_rooms_list",
         description="📊 (Admin) ดูรายการห้อง AI ส่วนตัวทั้งหมดในเซิร์ฟเวอร์"
@@ -747,6 +856,7 @@ class AIBot(commands.Cog):
     # 🎭 PERSONALITY / MEMORY COMMANDS
     # ══════════════════════════════════════
 
+    @_guild_scope_decorator()
     @app_commands.command(name="ai_mode", description="🎭 เปลี่ยน personality ของ AI")
     @app_commands.describe(โหมด="เลือก personality ที่ต้องการ")
     @app_commands.choices(โหมด=[
@@ -767,6 +877,7 @@ class AIBot(commands.Cog):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @_guild_scope_decorator()
     @app_commands.command(name="ai_memory", description="🧠 ดู/ลบ ความจำที่ AI มีเกี่ยวกับคุณ")
     @app_commands.describe(action="ดูความจำ หรือ ลบความจำทั้งหมด")
     @app_commands.choices(action=[
@@ -823,6 +934,7 @@ class AIBot(commands.Cog):
                 "🗑️ ลบความจำทั้งหมดแล้ว! (เก็บ personality ไว้ให้)", ephemeral=True
             )
 
+    @_guild_scope_decorator()
     @app_commands.command(name="ai_summarize_now", description="📝 สั่งให้ AI สรุปบทสนทนาทันที")
     async def ai_summarize_now(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -842,6 +954,7 @@ class AIBot(commands.Cog):
                               description=summary[:4000], color=discord.Color.gold())
         await interaction.followup.send(embed=embed)
 
+    @_guild_scope_decorator()
     @app_commands.command(name="ai_forget_fact",
                           description="🔁 ลบข้อมูลเฉพาะอย่างที่ AI จำเกี่ยวกับคุณ")
     @app_commands.describe(ชื่อข้อมูล="เช่น name, location, age, likes ฯลฯ")
@@ -859,6 +972,22 @@ class AIBot(commands.Cog):
             await interaction.response.send_message(
                 f"❓ ไม่พบ **{key}**\nข้อมูลที่มี: `{keys}`", ephemeral=True
             )
+
+    @_guild_scope_decorator()
+    @app_commands.command(name="ai_panel", description="🧩 แผงควบคุม AI แบบ Interface")
+    async def ai_panel(self, interaction: discord.Interaction):
+        view = AIPanelView(self, interaction.user.id)
+        embed = discord.Embed(
+            title="🧩 AI Control Panel",
+            description=(
+                "เลือกคำสั่ง AI ผ่านปุ่ม/เมนูได้เลย\n"
+                "• ปุ่มคุย AI = พิมพ์ผ่าน Modal\n"
+                "• AI Zone/Rooms = จัดการห้อง\n"
+                "• Mode/Memory = ตั้งค่าพฤติกรรมและความจำ"
+            ),
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ═══════════════════════════════════════════════════════

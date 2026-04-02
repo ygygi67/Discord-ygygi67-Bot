@@ -347,8 +347,8 @@ class Admin(commands.Cog):
         เฉพาะบอท="ลบเฉพาะข้อความจากบอท",
         เฉพาะเว็บฮุก="ลบเฉพาะข้อความจาก webhook",
         เฉพาะแอปภายนอก="ลบเฉพาะข้อความจาก interaction/app/webhook",
-        Webhook_ID="ลบเฉพาะ Webhook ID นี้",
-        Application_ID="ลบเฉพาะ Application ID นี้",
+        webhook_id="ลบเฉพาะ Webhook ID นี้",
+        application_id="ลบเฉพาะ Application ID นี้",
         ทุกช่อง="สแกนและลบจากทุกช่องข้อความในเซิร์ฟเวอร์"
     )
     async def clear(
@@ -363,8 +363,8 @@ class Admin(commands.Cog):
         เฉพาะบอท: bool = False,
         เฉพาะเว็บฮุก: bool = False,
         เฉพาะแอปภายนอก: bool = False,
-        Webhook_ID: Optional[str] = None,
-        Application_ID: Optional[str] = None,
+        webhook_id: Optional[str] = None,
+        application_id: Optional[str] = None,
         ทุกช่อง: bool = False
     ):
         """ล้างข้อความพร้อมฟิลเตอร์แบบละเอียด รองรับทุกช่องและปุ่มหยุดชั่วคราว/หยุด"""
@@ -395,16 +395,16 @@ class Admin(commands.Cog):
                 user_id_filter = int(ผู้ใช้ไอดี)
 
             webhook_id_filter = None
-            if Webhook_ID:
-                if not Webhook_ID.isdigit():
-                    return await interaction.followup.send("❌ `Webhook_ID` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
-                webhook_id_filter = int(Webhook_ID)
+            if webhook_id:
+                if not webhook_id.isdigit():
+                    return await interaction.followup.send("❌ `webhook_id` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
+                webhook_id_filter = int(webhook_id)
 
             application_id_filter = None
-            if Application_ID:
-                if not Application_ID.isdigit():
-                    return await interaction.followup.send("❌ `Application_ID` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
-                application_id_filter = int(Application_ID)
+            if application_id:
+                if not application_id.isdigit():
+                    return await interaction.followup.send("❌ `application_id` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
+                application_id_filter = int(application_id)
 
             after_limit = None
             if กี่ชั่วโมงที่ผ่านมา or กี่วันที่ผ่านมา:
@@ -709,9 +709,13 @@ class Admin(commands.Cog):
                 f"[Jump]({msg.jump_url})\n↳ {text}"
             )
 
+        desc = "\n\n".join(lines[:จำนวนผลลัพธ์])
+        if len(desc) > 3900:
+            desc = desc[:3890] + "\n\n... (ตัดข้อความเพื่อไม่ให้เกินลิมิต Discord)"
+
         embed = discord.Embed(
             title="📜 ผลการค้นหาข้อความย้อนหลัง",
-            description="\n\n".join(lines[:จำนวนผลลัพธ์]),
+            description=desc,
             color=discord.Color.green()
         )
         embed.add_field(name="สรุป", value=f"สแกน: `{scanned}` | พบ: `{len(matches)}` | แสดง: `{min(len(matches), จำนวนผลลัพธ์)}`", inline=False)
