@@ -59,6 +59,37 @@ class GuildPaginator(discord.ui.View):
             self.page += 1
             await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
+class BulkDeleteControlView(discord.ui.View):
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=1800)
+        self.owner_id = owner_id
+        self.paused = False
+        self.stopped = False
+
+    async def _auth(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ ปุ่มนี้สำหรับคนที่เริ่มคำสั่งเท่านั้น", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="⏸️ หยุดชั่วคราว", style=discord.ButtonStyle.secondary)
+    async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._auth(interaction):
+            return
+        self.paused = not self.paused
+        button.label = "▶️ ทำงานต่อ" if self.paused else "⏸️ หยุดชั่วคราว"
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(label="🛑 หยุดการทำงาน", style=discord.ButtonStyle.danger)
+    async def stop_action(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._auth(interaction):
+            return
+        self.stopped = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+        super().stop()
+
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -305,74 +336,388 @@ class Admin(commands.Cog):
         await interaction.response.send_message("🛑 กำลังปิดบอท...")
         await self.bot.close()
 
-    @app_commands.command(name="ล้างข้อความ", description="ล้างข้อความในแชท (เลือกกรองตามคน ยศ หรือเวลาได้)")
+    @app_commands.command(name="ล้างข้อความ", description="ลบข้อความแบบละเอียด (ทุกช่อง/ตาม ID/เว็บฮุก/แอป)")
     @app_commands.describe(
-        จำนวน="จำนวนข้อความที่ต้องการตรวจสอบ (สูงสุด 1000)", 
-        ผู้ใช้="ลบข้อความเฉพาะของสมาชิกคนนี้เท่านั้น",
-        ยศ="ลบข้อความเฉพาะของสมาชิกที่มีบทบาทนี้เท่านั้น",
-        กี่ชั่วโมงที่ผ่านมา="ลบข้อความที่ส่งไม่เกินกี่ชั่วโมงที่ผ่านมา (เช่น 0.5 คือ 30 นาที)",
-        กี่วันที่ผ่านมา="ลบข้อความที่ส่งไม่เกินกี่วันที่ผ่านมา"
+        จำนวน="จำนวนข้อความล่าสุดต่อช่องที่ต้องการสแกน (สูงสุด 1000)",
+        ผู้ใช้="ลบเฉพาะสมาชิกคนนี้ (กดเลือกจากรายชื่อ)",
+        ผู้ใช้ไอดี="ลบเฉพาะผู้ใช้ ID นี้ (เผื่อไม่ได้อยู่ในเซิร์ฟแล้ว)",
+        ยศ="ลบเฉพาะสมาชิกที่มียศนี้",
+        กี่ชั่วโมงที่ผ่านมา="ลบเฉพาะข้อความใหม่ภายในกี่ชั่วโมง",
+        กี่วันที่ผ่านมา="ลบเฉพาะข้อความใหม่ภายในกี่วัน",
+        เฉพาะบอท="ลบเฉพาะข้อความจากบอท",
+        เฉพาะเว็บฮุก="ลบเฉพาะข้อความจาก webhook",
+        เฉพาะแอปภายนอก="ลบเฉพาะข้อความจาก interaction/app/webhook",
+        Webhook_ID="ลบเฉพาะ Webhook ID นี้",
+        Application_ID="ลบเฉพาะ Application ID นี้",
+        ทุกช่อง="สแกนและลบจากทุกช่องข้อความในเซิร์ฟเวอร์"
     )
     async def clear(
-        self, 
-        interaction: discord.Interaction, 
-        จำนวน: int = 5, 
+        self,
+        interaction: discord.Interaction,
+        จำนวน: int = 30,
         ผู้ใช้: Optional[discord.Member] = None,
+        ผู้ใช้ไอดี: Optional[str] = None,
         ยศ: Optional[discord.Role] = None,
         กี่ชั่วโมงที่ผ่านมา: Optional[float] = None,
-        กี่วันที่ผ่านมา: Optional[float] = None
+        กี่วันที่ผ่านมา: Optional[float] = None,
+        เฉพาะบอท: bool = False,
+        เฉพาะเว็บฮุก: bool = False,
+        เฉพาะแอปภายนอก: bool = False,
+        Webhook_ID: Optional[str] = None,
+        Application_ID: Optional[str] = None,
+        ทุกช่อง: bool = False
     ):
-        """ล้างข้อความในแชทพร้อมตัวเลือกขั้นสูง"""
-        if not self.is_admin(interaction.user.id):
+        """ล้างข้อความพร้อมฟิลเตอร์แบบละเอียด รองรับทุกช่องและปุ่มหยุดชั่วคราว/หยุด"""
+        if not self.is_server_admin_or_bot_admin(interaction):
             return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
-            
+
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ ใช้คำสั่งนี้ได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
+
+        me = interaction.guild.me or interaction.guild.get_member(self.bot.user.id)
+        if not me or not me.guild_permissions.manage_messages:
+            return await interaction.response.send_message("❌ บอทไม่มีสิทธิ์ `Manage Messages`", ephemeral=True)
+
+        if จำนวน <= 0 or จำนวน > 1000:
+            return await interaction.response.send_message("❌ จำนวนข้อความต้องอยู่ระหว่าง 1 - 1000", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
         try:
-            await interaction.response.defer(ephemeral=True)
-            
-            if จำนวน <= 0 or จำนวน > 1000:
-                return await interaction.followup.send("❌ จำนวนข้อความต้องอยู่ระหว่าง 1 - 1000", ephemeral=True)
-                
-            # Time filter logic
+            user_id_filter = None
+            if ผู้ใช้ and ผู้ใช้ไอดี:
+                return await interaction.followup.send("❌ เลือกได้อย่างใดอย่างหนึ่ง: `ผู้ใช้` หรือ `ผู้ใช้ไอดี`", ephemeral=True)
+            if ผู้ใช้:
+                user_id_filter = ผู้ใช้.id
+            elif ผู้ใช้ไอดี:
+                if not ผู้ใช้ไอดี.isdigit():
+                    return await interaction.followup.send("❌ `ผู้ใช้ไอดี` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
+                user_id_filter = int(ผู้ใช้ไอดี)
+
+            webhook_id_filter = None
+            if Webhook_ID:
+                if not Webhook_ID.isdigit():
+                    return await interaction.followup.send("❌ `Webhook_ID` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
+                webhook_id_filter = int(Webhook_ID)
+
+            application_id_filter = None
+            if Application_ID:
+                if not Application_ID.isdigit():
+                    return await interaction.followup.send("❌ `Application_ID` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
+                application_id_filter = int(Application_ID)
+
             after_limit = None
             if กี่ชั่วโมงที่ผ่านมา or กี่วันที่ผ่านมา:
                 delta_hours = กี่ชั่วโมงที่ผ่านมา if กี่ชั่วโมงที่ผ่านมา else 0
                 delta_days = กี่วันที่ผ่านมา if กี่วันที่ผ่านมา else 0
                 after_limit = datetime.now(timezone.utc) - timedelta(days=delta_days, hours=delta_hours)
 
-            # Check function (Filters)
-            def check_filter(m):
-                if ผู้ใช้ and m.author.id != ผู้ใช้.id: return False
-                if ยศ and ยศ not in m.author.roles: return False
+            def check_filter(m: discord.Message) -> bool:
+                if user_id_filter and (not m.author or m.author.id != user_id_filter):
+                    return False
+                if ยศ:
+                    if not isinstance(m.author, discord.Member):
+                        return False
+                    if ยศ not in m.author.roles:
+                        return False
+                if เฉพาะบอท and not (m.author and m.author.bot):
+                    return False
+                if เฉพาะเว็บฮุก and m.webhook_id is None:
+                    return False
+                if เฉพาะแอปภายนอก and (m.webhook_id is None and m.application_id is None):
+                    return False
+                if webhook_id_filter and m.webhook_id != webhook_id_filter:
+                    return False
+                if application_id_filter and m.application_id != application_id_filter:
+                    return False
                 return True
 
             filter_info = []
-            if ผู้ใช้: filter_info.append(f"👤 {ผู้ใช้.name}")
-            if ยศ: filter_info.append(f"🛡️ ยศ {ยศ.name}")
+            if user_id_filter: filter_info.append(f"👤 UID `{user_id_filter}`")
+            if ยศ: filter_info.append(f"🛡️ {ยศ.name}")
+            if เฉพาะบอท: filter_info.append("🤖 เฉพาะบอท")
+            if เฉพาะเว็บฮุก: filter_info.append("🪝 เฉพาะเว็บฮุก")
+            if เฉพาะแอปภายนอก: filter_info.append("🧩 เฉพาะแอปภายนอก")
+            if webhook_id_filter: filter_info.append(f"🪝 Webhook `{webhook_id_filter}`")
+            if application_id_filter: filter_info.append(f"🧩 App `{application_id_filter}`")
             if after_limit: filter_info.append(f"⏱️ ตั้งแต่ {after_limit.strftime('%d/%m %H:%M')}")
-            
+            if ทุกช่อง: filter_info.append("🌐 ทุกช่อง")
+
             info_str = f" ({' | '.join(filter_info)})" if filter_info else ""
-            status_msg = await interaction.followup.send(f"🗑️ กำลังลบ {จำนวน} ข้อความ{info_str}...")
-            
-            try:
-                deleted = await interaction.channel.purge(
-                    limit=จำนวน, 
-                    check=check_filter, 
-                    after=after_limit
-                )
-                total_deleted = len(deleted)
-                
-                msg = f"✅ ล้างข้อความเรียบร้อยแล้ว!"
-                if filter_info: msg += f"\n🎯 พบและลบที่ตรงเงื่อนไข: **{total_deleted}** ข้อความ"
-                else: msg += f" ทั้งหมด **{total_deleted}** ข้อความ"
-                
-                await status_msg.edit(content=msg)
-            except discord.Forbidden:
-                await status_msg.edit(content="❌ บอทไม่มีสิทธิ์ 'Manage Messages' ในห้องนี้")
-            except Exception as e:
-                await status_msg.edit(content=f"❌ เกิดข้อผิดพลาด: {str(e)}")
-                
+            view = BulkDeleteControlView(interaction.user.id)
+            status_msg = await interaction.followup.send(
+                f"🗑️ กำลังสแกนและลบข้อความ {จำนวน} รายการล่าสุดต่อช่อง{info_str}...",
+                view=view
+            )
+
+            channels = []
+            if ทุกช่อง:
+                for ch in interaction.guild.text_channels:
+                    perms = ch.permissions_for(me)
+                    if perms.read_message_history and perms.manage_messages:
+                        channels.append(ch)
+            else:
+                if not isinstance(interaction.channel, discord.TextChannel):
+                    return await status_msg.edit(content="❌ ห้องนี้ไม่ใช่ห้องข้อความ", view=None)
+                channels = [interaction.channel]
+
+            total_scanned = 0
+            total_matched = 0
+            deleted_count = 0
+            failed_count = 0
+
+            for channel_idx, channel in enumerate(channels, start=1):
+                if view.stopped:
+                    break
+                while view.paused and not view.stopped:
+                    await status_msg.edit(
+                        content=f"⏸️ หยุดชั่วคราวอยู่... ({channel_idx}/{len(channels)}) | ลบแล้ว {deleted_count} | ล้มเหลว {failed_count}",
+                        view=view
+                    )
+                    await asyncio.sleep(1.0)
+                if view.stopped:
+                    break
+
+                try:
+                    messages = [m async for m in channel.history(limit=จำนวน, after=after_limit)]
+                except Exception:
+                    failed_count += 1
+                    continue
+
+                total_scanned += len(messages)
+                targets = [m for m in messages if check_filter(m) and m.id != status_msg.id]
+                total_matched += len(targets)
+
+                bulk_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+                bulk_targets = [m for m in targets if m.created_at > bulk_cutoff]
+                single_targets = [m for m in targets if m.created_at <= bulk_cutoff]
+
+                # ลบแบบ bulk ก่อน (ลด 429 ได้เยอะมาก)
+                for i in range(0, len(bulk_targets), 100):
+                    if view.stopped:
+                        break
+                    while view.paused and not view.stopped:
+                        await asyncio.sleep(0.8)
+                    if view.stopped:
+                        break
+
+                    chunk = bulk_targets[i:i + 100]
+                    try:
+                        if len(chunk) == 1:
+                            await chunk[0].delete()
+                            deleted_count += 1
+                        elif len(chunk) > 1:
+                            await channel.delete_messages(chunk)
+                            deleted_count += len(chunk)
+                    except (discord.Forbidden, discord.HTTPException):
+                        # fallback ลบทีละข้อความ
+                        for msg in chunk:
+                            try:
+                                await msg.delete()
+                                deleted_count += 1
+                                await asyncio.sleep(0.45)
+                            except (discord.Forbidden, discord.HTTPException):
+                                failed_count += 1
+
+                    await status_msg.edit(
+                        content=(
+                            f"🧹 กำลังทำงาน... ช่อง {channel_idx}/{len(channels)} (`#{channel.name}`)\n"
+                            f"📚 สแกน: {total_scanned} | 🎯 ตรงเงื่อนไข: {total_matched}\n"
+                            f"✅ ลบแล้ว: {deleted_count} | ⚠️ ล้มเหลว: {failed_count}\n"
+                            f"⚡ โหมดลบ: Bulk ({len(bulk_targets)} ข้อความในช่องนี้)"
+                        ),
+                        view=view
+                    )
+                    await asyncio.sleep(1.2)
+
+                # ลบข้อความเก่า (เกิน 14 วัน) ทีละข้อความ พร้อมหน่วงเพื่อลด 429
+                for msg_idx, msg in enumerate(single_targets, start=1):
+                    if view.stopped:
+                        break
+                    while view.paused and not view.stopped:
+                        await asyncio.sleep(0.8)
+                    if view.stopped:
+                        break
+
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                    except (discord.Forbidden, discord.HTTPException):
+                        failed_count += 1
+
+                    await asyncio.sleep(0.55)
+                    if (msg_idx % 15 == 0) or (deleted_count + failed_count) % 30 == 0:
+                        await status_msg.edit(
+                            content=(
+                                f"🧹 กำลังทำงาน... ช่อง {channel_idx}/{len(channels)} (`#{channel.name}`)\n"
+                                f"📚 สแกน: {total_scanned} | 🎯 ตรงเงื่อนไข: {total_matched}\n"
+                                f"✅ ลบแล้ว: {deleted_count} | ⚠️ ล้มเหลว: {failed_count}\n"
+                                f"🐢 โหมดลบ: ทีละข้อความ (เก่าเกิน 14 วัน)"
+                            ),
+                            view=view
+                        )
+
+            stopped_text = " (ผู้ใช้กดหยุดการทำงาน)" if view.stopped else ""
+            summary = (
+                f"✅ ล้างข้อความเสร็จสิ้น{stopped_text}\n"
+                f"📚 สแกนทั้งหมด: **{total_scanned}** ข้อความ\n"
+                f"🎯 ตรงเงื่อนไข: **{total_matched}** ข้อความ\n"
+                f"🗑️ ลบสำเร็จ: **{deleted_count}**\n"
+                f"⚠️ ลบไม่สำเร็จ: **{failed_count}**\n"
+                f"👮 ผู้ใช้คำสั่ง: {interaction.user.mention} (`{interaction.user.id}`)"
+            )
+            for item in view.children:
+                item.disabled = True
+            await status_msg.edit(content=summary, view=view)
+
+            logger.info(
+                f"[CLEAR] guild={interaction.guild.id} by={interaction.user.id} all_channels={ทุกช่อง} "
+                f"channels={len(channels)} scanned={total_scanned} matched={total_matched} "
+                f"deleted={deleted_count} failed={failed_count}"
+            )
         except Exception as e:
-            logger.error(f"Error in clear_messages: {e}")
+            logger.error(f"Error in clear_messages: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดระหว่างลบข้อความ: {str(e)[:250]}", ephemeral=True)
+
+    @app_commands.command(name="ตรวจสอบข้อความ", description="ดูแหล่งที่มาของข้อความ (บอท/เว็บฮุก/แอป)")
+    @app_commands.describe(message_id="ไอดีข้อความที่ต้องการตรวจสอบ", ช่อง="ช่องที่ข้อความนั้นอยู่ (ถ้าไม่ใส่จะใช้ห้องปัจจุบัน)")
+    async def inspect_message(self, interaction: discord.Interaction, message_id: str, ช่อง: Optional[discord.TextChannel] = None):
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ ใช้ได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        target_channel = ช่อง or interaction.channel
+        if not isinstance(target_channel, discord.TextChannel):
+            return await interaction.followup.send("❌ ต้องเป็นห้องข้อความเท่านั้น", ephemeral=True)
+
+        try:
+            msg = await target_channel.fetch_message(int(message_id))
+        except Exception:
+            return await interaction.followup.send("❌ ไม่พบข้อความนี้ หรือบอทไม่มีสิทธิ์อ่านประวัติข้อความ", ephemeral=True)
+
+        interaction_user_text = "ไม่พบข้อมูล"
+        if getattr(msg, "interaction", None) and getattr(msg.interaction, "user", None):
+            interaction_user_text = f"{msg.interaction.user.mention} (`{msg.interaction.user.id}`)"
+        elif getattr(msg, "interaction_metadata", None):
+            user_id = getattr(msg.interaction_metadata, "user_id", None)
+            if user_id:
+                interaction_user_text = f"<@{user_id}> (`{user_id}`)"
+
+        embed = discord.Embed(title="🔎 ตรวจสอบแหล่งที่มาข้อความ", color=discord.Color.blurple())
+        embed.add_field(name="Message ID", value=f"`{msg.id}`", inline=False)
+        embed.add_field(name="Author", value=f"{msg.author} (`{msg.author.id}`)", inline=False)
+        embed.add_field(name="Author is bot", value="ใช่" if msg.author.bot else "ไม่ใช่", inline=True)
+        embed.add_field(name="Webhook ID", value=f"`{msg.webhook_id}`" if msg.webhook_id else "ไม่มี", inline=True)
+        embed.add_field(name="Application ID", value=f"`{msg.application_id}`" if msg.application_id else "ไม่มี", inline=True)
+        embed.add_field(name="คนที่กดคำสั่งแอป (ถ้าดึงได้)", value=interaction_user_text, inline=False)
+        embed.add_field(name="Channel", value=f"{target_channel.mention} (`{target_channel.id}`)", inline=False)
+        embed.set_footer(text="ถ้าเป็นข้อความจากบอทภายนอกและไม่มี interaction metadata อาจระบุตัวผู้ใช้จริงไม่ได้")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="ค้นหาข้อความ", description="ค้นหาว่าใครเคยพิมพ์อะไรไว้ (ใส่ ID หรือเลือกผู้ใช้ได้)")
+    @app_commands.describe(
+        ผู้ใช้="เลือกจากรายชื่อสมาชิก",
+        ผู้ใช้ไอดี="ค้นหาจาก User ID",
+        คำค้น="คำที่ต้องการค้นหาในข้อความ",
+        ทุกช่อง="ค้นหาทุกห้องข้อความในเซิร์ฟเวอร์",
+        จำนวนต่อช่อง="จำนวนข้อความที่สแกนต่อห้อง (สูงสุด 1000)",
+        จำนวนผลลัพธ์="จำนวนผลลัพธ์ที่แสดงสูงสุด"
+    )
+    async def search_messages(
+        self,
+        interaction: discord.Interaction,
+        ผู้ใช้: Optional[discord.Member] = None,
+        ผู้ใช้ไอดี: Optional[str] = None,
+        คำค้น: Optional[str] = None,
+        ทุกช่อง: bool = True,
+        จำนวนต่อช่อง: int = 200,
+        จำนวนผลลัพธ์: int = 20
+    ):
+        if not self.is_server_admin_or_bot_admin(interaction):
+            return await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ ใช้ได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
+        if จำนวนต่อช่อง <= 0 or จำนวนต่อช่อง > 1000:
+            return await interaction.response.send_message("❌ `จำนวนต่อช่อง` ต้องอยู่ระหว่าง 1 - 1000", ephemeral=True)
+        if จำนวนผลลัพธ์ <= 0 or จำนวนผลลัพธ์ > 50:
+            return await interaction.response.send_message("❌ `จำนวนผลลัพธ์` ต้องอยู่ระหว่าง 1 - 50", ephemeral=True)
+        if not ผู้ใช้ and not ผู้ใช้ไอดี and not คำค้น:
+            return await interaction.response.send_message("❌ กรุณาใส่อย่างน้อย 1 เงื่อนไข: ผู้ใช้/ผู้ใช้ไอดี/คำค้น", ephemeral=True)
+        if ผู้ใช้ and ผู้ใช้ไอดี:
+            return await interaction.response.send_message("❌ เลือกได้อย่างใดอย่างหนึ่ง: `ผู้ใช้` หรือ `ผู้ใช้ไอดี`", ephemeral=True)
+
+        user_id_filter = None
+        if ผู้ใช้:
+            user_id_filter = ผู้ใช้.id
+        elif ผู้ใช้ไอดี:
+            if not ผู้ใช้ไอดี.isdigit():
+                return await interaction.response.send_message("❌ `ผู้ใช้ไอดี` ต้องเป็นตัวเลขเท่านั้น", ephemeral=True)
+            user_id_filter = int(ผู้ใช้ไอดี)
+
+        await interaction.response.defer(ephemeral=True)
+
+        me = interaction.guild.me or interaction.guild.get_member(self.bot.user.id)
+        channels = []
+        if ทุกช่อง:
+            for ch in interaction.guild.text_channels:
+                perms = ch.permissions_for(me)
+                if perms.read_message_history and perms.view_channel:
+                    channels.append(ch)
+        else:
+            if not isinstance(interaction.channel, discord.TextChannel):
+                return await interaction.followup.send("❌ ห้องนี้ไม่ใช่ห้องข้อความ", ephemeral=True)
+            channels = [interaction.channel]
+
+        status_msg = await interaction.followup.send(f"🔍 กำลังค้นหาใน {len(channels)} ห้อง...")
+
+        matches = []
+        scanned = 0
+
+        for idx, channel in enumerate(channels, start=1):
+            try:
+                async for msg in channel.history(limit=จำนวนต่อช่อง):
+                    scanned += 1
+                    if user_id_filter and msg.author.id != user_id_filter:
+                        continue
+                    if คำค้น and คำค้น.lower() not in (msg.content or "").lower():
+                        continue
+                    matches.append(msg)
+                    if len(matches) >= จำนวนผลลัพธ์:
+                        break
+                if len(matches) >= จำนวนผลลัพธ์:
+                    break
+                if idx % 5 == 0:
+                    await status_msg.edit(content=f"🔍 กำลังค้นหา... ({idx}/{len(channels)}) | สแกน {scanned} | พบ {len(matches)}")
+            except Exception:
+                continue
+
+        if not matches:
+            return await status_msg.edit(content=f"ℹ️ ไม่พบข้อความตามเงื่อนไข (สแกน {scanned} ข้อความ)")
+
+        lines = []
+        for i, msg in enumerate(matches[:จำนวนผลลัพธ์], start=1):
+            text = (msg.content or "").strip().replace("\n", " ")
+            if len(text) > 70:
+                text = text[:67] + "..."
+            if not text:
+                text = "[ไม่มีข้อความตัวอักษร]"
+            lines.append(
+                f"{i}. <@{msg.author.id}> (`{msg.author.id}`) | <#{msg.channel.id}> | "
+                f"[Jump]({msg.jump_url})\n↳ {text}"
+            )
+
+        embed = discord.Embed(
+            title="📜 ผลการค้นหาข้อความย้อนหลัง",
+            description="\n\n".join(lines[:จำนวนผลลัพธ์]),
+            color=discord.Color.green()
+        )
+        embed.add_field(name="สรุป", value=f"สแกน: `{scanned}` | พบ: `{len(matches)}` | แสดง: `{min(len(matches), จำนวนผลลัพธ์)}`", inline=False)
+        embed.set_footer(text="คุณสามารถคัดลอก User ID/Message ID ไปใช้กับคำสั่งอื่นต่อได้")
+
+        await status_msg.edit(content="✅ ค้นหาเสร็จแล้ว", embed=embed)
 
     @app_commands.command(name="สถานะ", description="แสดงสถานะของบอทและเซิร์ฟเวอร์")
     async def status(self, interaction: discord.Interaction):
