@@ -2325,17 +2325,37 @@ class MemberHelpView(discord.ui.View):
 
 async def setup(bot):
     """Add the cog to the bot"""
-    guild_id = os.getenv("DISCORD_GUILD_ID")
-    if guild_id and guild_id.strip().isdigit():
-        await bot.add_cog(Utility(bot), guild=discord.Object(id=int(guild_id)))
+    # ป้องกันเพดาน 100 global commands:
+    # - ค่าเริ่มต้น: ลงทะเบียน Utility เป็น guild-scoped หลายเซิร์ฟเวอร์
+    # - ถ้าต้องการ global จริง ๆ ให้ตั้ง FORCE_GLOBAL_UTILITY_COMMANDS=1
+    force_global = os.getenv("FORCE_GLOBAL_UTILITY_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if force_global:
+        await bot.add_cog(Utility(bot))
         return
+
+    guild_ids: set[int] = set()
+
+    env_gid = os.getenv("DISCORD_GUILD_ID", "").strip()
+    if env_gid.isdigit():
+        guild_ids.add(int(env_gid))
+
+    env_multi = os.getenv("DISCORD_GUILD_IDS", "")
+    if env_multi:
+        for token in re.split(r"[\s,;|]+", env_multi):
+            token = token.strip()
+            if token.isdigit():
+                guild_ids.add(int(token))
 
     data_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data"))
     if os.path.isdir(data_dir):
         for name in os.listdir(data_dir):
             m = re.match(r"^(\d{15,21})_", name)
             if m:
-                await bot.add_cog(Utility(bot), guild=discord.Object(id=int(m.group(1))))
-                return
+                guild_ids.add(int(m.group(1)))
+
+    if guild_ids:
+        await bot.add_cog(Utility(bot), guilds=[discord.Object(id=g) for g in sorted(guild_ids)])
+        logger.info(f"[Utility] Registered as guild-scoped for {len(guild_ids)} guild(s)")
+        return
 
     await bot.add_cog(Utility(bot))

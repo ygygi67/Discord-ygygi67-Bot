@@ -1265,7 +1265,7 @@ class Admin(commands.Cog):
         Parameters
         ----------
         scope: str
-            ขอบเขตการซิงค์ (guild หรือ global)
+            ขอบเขตการซิงค์ (guild, global หรือ all)
         force: bool
             บังคับซิงค์ใหม่ทั้งหมด
         """
@@ -1285,16 +1285,30 @@ class Admin(commands.Cog):
                     ephemeral=True
                 )
             
-            if scope.lower() == "global":
+            normalized_scope = scope.lower().strip()
+            if normalized_scope == "global":
                 # Sync globally
                 if force:
                     # Clear existing commands first
                     await self.bot.tree.clear_commands(guild=None)
                     await interaction.followup.send("🗑️ ล้างคำสั่งเก่าทั้งหมดแล้ว", ephemeral=True)
                 
-                synced = await self.bot.sync_commands()
-                logger.info(f"/sync (global): Synced {len(synced[0]) if isinstance(synced, tuple) else len(synced)} commands globally.")
-                await interaction.followup.send(f"✅ ซิงค์คำสั่งทั้งหมด {synced} คำสั่งเรียบร้อยแล้ว", ephemeral=True)
+                synced = await self.bot.tree.sync()
+                synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
+                logger.info(f"/sync (global): Synced {synced_count} commands globally.")
+                await interaction.followup.send(f"✅ ซิงค์คำสั่งแบบ Global เรียบร้อย ({synced_count} คำสั่ง)", ephemeral=True)
+            elif normalized_scope in {"all", "all_guilds", "allguilds"}:
+                total_synced = 0
+                for guild in self.bot.guilds:
+                    try:
+                        guild_synced = await self.bot.tree.sync(guild=guild)
+                        total_synced += len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
+                    except Exception as guild_error:
+                        logger.warning(f"/sync (all): failed in guild {guild.id}: {guild_error}")
+                await interaction.followup.send(
+                    f"✅ ซิงค์คำสั่งทุกเซิร์ฟเวอร์เรียบร้อย (รวม {total_synced} รายการจาก {len(self.bot.guilds)} เซิร์ฟเวอร์)",
+                    ephemeral=True
+                )
             else:
                 # Sync to current guild
                 if force:
@@ -1302,9 +1316,10 @@ class Admin(commands.Cog):
                     await self.bot.tree.clear_commands(guild=interaction.guild)
                     await interaction.followup.send("🗑️ ล้างคำสั่งเก่าทั้งหมดแล้ว", ephemeral=True)
                 
-                synced = await self.bot.sync_commands(interaction.guild)
-                logger.info(f"/sync (guild): Synced {len(synced[0]) if isinstance(synced, tuple) else len(synced)} commands to guild {interaction.guild.name}.")
-                await interaction.followup.send(f"✅ ซิงค์คำสั่งทั้งหมด {synced} คำสั่งกับเซิร์ฟเวอร์นี้เรียบร้อยแล้ว", ephemeral=True)
+                synced = await self.bot.tree.sync(guild=interaction.guild)
+                synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
+                logger.info(f"/sync (guild): Synced {synced_count} commands to guild {interaction.guild.name}.")
+                await interaction.followup.send(f"✅ ซิงค์คำสั่งกับเซิร์ฟเวอร์นี้เรียบร้อย ({synced_count} คำสั่ง)", ephemeral=True)
                 
         except discord.HTTPException as e:
             if e.status == 429:  # Rate limit hit
@@ -1315,11 +1330,25 @@ class Admin(commands.Cog):
                 )
                 await asyncio.sleep(retry_after)
                 try:
-                    if scope.lower() == "global":
-                        synced = await self.bot.sync_commands()
+                    if normalized_scope == "global":
+                        synced = await self.bot.tree.sync()
+                    elif normalized_scope in {"all", "all_guilds", "allguilds"}:
+                        total_synced = 0
+                        for guild in self.bot.guilds:
+                            try:
+                                guild_synced = await self.bot.tree.sync(guild=guild)
+                                total_synced += len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
+                            except Exception as guild_error:
+                                logger.warning(f"/sync retry (all): failed in guild {guild.id}: {guild_error}")
+                        await interaction.followup.send(
+                            f"✅ ซิงค์คำสั่งทุกเซิร์ฟเวอร์เรียบร้อย (รวม {total_synced} รายการจาก {len(self.bot.guilds)} เซิร์ฟเวอร์)",
+                            ephemeral=True
+                        )
+                        return
                     else:
-                        synced = await self.bot.sync_commands(interaction.guild)
-                    await interaction.followup.send(f"✅ ซิงค์คำสั่งทั้งหมด {synced} คำสั่งเรียบร้อยแล้ว", ephemeral=True)
+                        synced = await self.bot.tree.sync(guild=interaction.guild)
+                    synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
+                    await interaction.followup.send(f"✅ ซิงค์คำสั่งเรียบร้อย ({synced_count} คำสั่ง)", ephemeral=True)
                 except Exception as e:
                     logger.error(f"Error in sync retry: {e}")
                     await interaction.followup.send("❌ เกิดข้อผิดพลาดในการซิงค์คำสั่ง", ephemeral=True)

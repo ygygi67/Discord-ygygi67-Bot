@@ -27,16 +27,16 @@ from cogs.utility.server_link import get_guild_settings
 logger = logging.getLogger(__name__)
 
 def _guild_scope_decorator():
-    guild_id = os.getenv("DISCORD_GUILD_ID")
-    if guild_id and guild_id.strip().isdigit():
-        return app_commands.guilds(discord.Object(id=int(guild_id)))
-
-    data_dir = os.path.normpath(os.path.join(_BASE, "..", "..", "data"))
-    if os.path.isdir(data_dir):
-        for name in os.listdir(data_dir):
-            m = re.match(r"^(\d{15,21})_", name)
-            if m:
-                return app_commands.guilds(discord.Object(id=int(m.group(1))))
+    # ค่าเริ่มต้นให้เป็น guild-scope เพื่อไม่ชนเพดาน 100 global commands
+    # ถ้าต้องการบังคับ Global ให้ตั้ง FORCE_GLOBAL_AI_COMMANDS=1
+    force_global_ai = os.getenv("FORCE_GLOBAL_AI_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    use_guild_scope = (not force_global_ai) and (
+        os.getenv("USE_GUILD_SCOPED_COMMANDS", "1").strip().lower() in {"1", "true", "yes", "on"}
+    )
+    if use_guild_scope:
+        guild_id = os.getenv("DISCORD_GUILD_ID")
+        if guild_id and guild_id.strip().isdigit():
+            return app_commands.guilds(discord.Object(id=int(guild_id)))
     return lambda x: x
 
 # ─────────────────────────────────────────
