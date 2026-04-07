@@ -246,6 +246,18 @@ class AlphaBotBase:
             parts = line.split()
             action = parts[0].lower()
             arg = " ".join(parts[1:]).strip() if len(parts) > 1 else ""
+            aliases = {
+                "h": "help", "?": "help",
+                "st": "status",
+                "d": "disable", "dis": "disable",
+                "e": "enable", "en": "enable",
+                "l": "list", "ls": "list",
+                "sy": "sync",
+                "gs": "guildsync",
+                "r": "restart", "rs": "restart",
+                "s": "stop", "q": "stop", "x": "stop",
+            }
+            action = aliases.get(action, action)
 
             if action in {"help", "h", "?"}:
                 logger.info(
@@ -267,7 +279,7 @@ class AlphaBotBase:
                 )
             elif action == "disable":
                 if not arg:
-                    logger.warning("Usage: disable <command_name>")
+                    logger.warning("Usage: disable <command_name> | shorthand: d <command_name> (เช่น: d โหลดคลิป)")
                     continue
                 cmd = arg.replace("/", "").strip().lower()
                 self.disabled_slash_commands.add(cmd)
@@ -275,7 +287,7 @@ class AlphaBotBase:
                 logger.info(f"⛔ Disabled command: /{cmd}")
             elif action == "enable":
                 if not arg:
-                    logger.warning("Usage: enable <command_name>")
+                    logger.warning("Usage: enable <command_name> | shorthand: e <command_name> (เช่น: e โหลดคลิป)")
                     continue
                 cmd = arg.replace("/", "").strip().lower()
                 if cmd in self.disabled_slash_commands:
