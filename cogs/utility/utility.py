@@ -57,7 +57,17 @@ class Utility(commands.Cog):
         self.walking_frames = ["🚶", "🏃", "🚶", "🏃"]  # Walking animation frames
         self.current_frame = 0
         self.bot_admin_id = 1034845842709958786
+        self.main_only_mode = os.getenv("UTILITY_MAIN_ONLY", "1").strip().lower() in {"1", "true", "yes", "on"}
+        default_core = ["คำสั่ง", "โหลดคลิป", "เสียง", "ระบบ", "ติดตาม", "สถิติ", "เชิญบอทเต็ม"]
+        raw_core = os.getenv("UTILITY_CORE_COMMANDS", ",".join(default_core)).strip()
+        self.core_commands = {x.strip() for x in re.split(r"[,\s;|]+", raw_core) if x.strip()}
         logging.info("Utility cog initialized")
+
+    def get_app_commands(self):
+        commands_list = super().get_app_commands()
+        if not self.main_only_mode:
+            return commands_list
+        return [cmd for cmd in commands_list if cmd.name in self.core_commands]
 
     def _is_bot_admin(self, user_id: int) -> bool:
         """ตรวจสอบว่าเป็นแอดมินบอทหรือไม่"""
@@ -2325,12 +2335,20 @@ class MemberHelpView(discord.ui.View):
 
 async def setup(bot):
     """Add the cog to the bot"""
-    # ป้องกันเพดาน 100 global commands:
-    # - ค่าเริ่มต้น: ลงทะเบียน Utility เป็น guild-scoped หลายเซิร์ฟเวอร์
-    # - ถ้าต้องการ global จริง ๆ ให้ตั้ง FORCE_GLOBAL_UTILITY_COMMANDS=1
-    force_global = os.getenv("FORCE_GLOBAL_UTILITY_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if force_global:
-        await bot.add_cog(Utility(bot))
+    # ค่าเริ่มต้น: ลงทะเบียนแบบ Global เพื่อให้คำสั่งหลักเหมือนกันทุกเซิร์ฟเวอร์
+    # ถ้าต้องการบังคับ guild-scoped ให้ตั้ง FORCE_GUILD_UTILITY_COMMANDS=1
+    force_guild_scope = os.getenv("FORCE_GUILD_UTILITY_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    utility_cog = Utility(bot)
+
+    if not force_guild_scope:
+        await bot.add_cog(utility_cog)
+        if utility_cog.main_only_mode:
+            removed = 0
+            for cmd in list(bot.tree.get_commands(type=discord.AppCommandType.chat_input)):
+                if getattr(cmd, "binding", None) is utility_cog and cmd.name not in utility_cog.core_commands:
+                    bot.tree.remove_command(cmd.name, type=discord.AppCommandType.chat_input)
+                    removed += 1
+            logger.info(f"[Utility] Main-only filter applied (kept={sorted(utility_cog.core_commands)}, removed={removed})")
         return
 
     guild_ids: set[int] = set()
@@ -2352,10 +2370,38 @@ async def setup(bot):
             m = re.match(r"^(\d{15,21})_", name)
             if m:
                 guild_ids.add(int(m.group(1)))
+        for filename in ("server_link_config.json", "ai_guild_config.json"):
+            path = os.path.join(data_dir, filename)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                if isinstance(payload, dict):
+                    for key in payload.keys():
+                        key = str(key).strip()
+                        if key.isdigit():
+                            guild_ids.add(int(key))
+            except Exception:
+                pass
 
     if guild_ids:
-        await bot.add_cog(Utility(bot), guilds=[discord.Object(id=g) for g in sorted(guild_ids)])
+        await bot.add_cog(utility_cog, guilds=[discord.Object(id=g) for g in sorted(guild_ids)])
         logger.info(f"[Utility] Registered as guild-scoped for {len(guild_ids)} guild(s)")
+        if utility_cog.main_only_mode:
+            removed = 0
+            for cmd in list(bot.tree.get_commands(type=discord.AppCommandType.chat_input)):
+                if getattr(cmd, "binding", None) is utility_cog and cmd.name not in utility_cog.core_commands:
+                    bot.tree.remove_command(cmd.name, type=discord.AppCommandType.chat_input)
+                    removed += 1
+            logger.info(f"[Utility] Main-only filter applied (kept={sorted(utility_cog.core_commands)}, removed={removed})")
         return
 
-    await bot.add_cog(Utility(bot))
+    await bot.add_cog(utility_cog)
+    if utility_cog.main_only_mode:
+        removed = 0
+        for cmd in list(bot.tree.get_commands(type=discord.AppCommandType.chat_input)):
+            if getattr(cmd, "binding", None) is utility_cog and cmd.name not in utility_cog.core_commands:
+                bot.tree.remove_command(cmd.name, type=discord.AppCommandType.chat_input)
+                removed += 1
+        logger.info(f"[Utility] Main-only filter applied (kept={sorted(utility_cog.core_commands)}, removed={removed})")

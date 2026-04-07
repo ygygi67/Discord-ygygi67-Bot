@@ -431,6 +431,19 @@ class AIBot(commands.Cog):
         self._session: Optional[aiohttp.ClientSession] = None
         # cache ของ channel IDs ที่เป็น AI zone (populate ตอน ready)
         self._ai_channel_cache: set[int] = set()
+        # ปิด slash AI ทั้งหมดเป็นค่าเริ่มต้น เพื่อลดปัญหาเกิน 100 global commands
+        self.ai_disable_slash = os.getenv("AI_DISABLE_SLASH", "1").strip().lower() in {"1", "true", "yes", "on"}
+        # ลดจำนวน slash commands: ให้เหลือหน้า Control Panel เป็นหลัก
+        self.ai_panel_only = os.getenv("AI_PANEL_ONLY", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+    def get_app_commands(self):
+        commands_list = super().get_app_commands()
+        if self.ai_disable_slash:
+            return []
+        if not self.ai_panel_only:
+            return commands_list
+        # เหลือคำสั่งเดียว: /ai (เปิด Control Panel)
+        return [cmd for cmd in commands_list if cmd.name == "ai"]
 
     async def cog_load(self):
         self._session = aiohttp.ClientSession()
@@ -523,19 +536,20 @@ class AIBot(commands.Cog):
     # SLASH: /ai
     # ──────────────────────────────────────
     @_guild_scope_decorator()
-    @app_commands.command(name="ai", description="💬 คุยกับ AI โมสต์ (มีความจำระยะยาว)")
-    @app_commands.describe(ข้อความ="พิมพ์ข้อความที่ต้องการถามหรือคุย")
-    async def ai_chat(self, interaction: discord.Interaction, ข้อความ: str):
-        await interaction.response.defer(thinking=True)
-        reply = await self._process_chat(
-            str(interaction.user.id),
-            interaction.user.display_name,
-            ข้อความ,
+    @app_commands.command(name="ai", description="🧩 แผงควบคุม AI แบบ Interface")
+    async def ai_chat(self, interaction: discord.Interaction):
+        view = AIPanelView(self, interaction.user.id)
+        embed = discord.Embed(
+            title="🧩 AI Control Panel",
+            description=(
+                "เลือกใช้งาน AI ผ่านปุ่ม/เมนูในหน้าเดียว\n"
+                "• คุย AI ผ่าน Modal\n"
+                "• จัดการ AI Zone / ห้องส่วนตัว\n"
+                "• ตั้งค่า Mode / Memory"
+            ),
+            color=discord.Color.blurple(),
         )
-        chunks = self._split(reply)
-        await interaction.followup.send(chunks[0])
-        for chunk in chunks[1:]:
-            await interaction.followup.send(chunk)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # ──────────────────────────────────────
     # PREFIX: !chat / !โมสต์ / !ai
@@ -994,5 +1008,19 @@ class AIBot(commands.Cog):
 # 🚀 SETUP
 # ═══════════════════════════════════════════════════════
 async def setup(bot: commands.Bot):
-    await bot.add_cog(AIBot(bot))
+    cog = AIBot(bot)
+    await bot.add_cog(cog)
+
+    # บังคับให้เหลือเฉพาะ /ai ใน Slash เพื่อลดคำสั่งเกินและตัดคำสั่งย่อยซ้ำ
+    if cog.ai_disable_slash or cog.ai_panel_only:
+        keep = set()
+        if not cog.ai_disable_slash:
+            keep = {"ai"}
+        removed = 0
+        for cmd in list(bot.tree.get_commands(type=discord.AppCommandType.chat_input)):
+            if getattr(cmd, "binding", None) is cog and cmd.name not in keep:
+                bot.tree.remove_command(cmd.name, type=discord.AppCommandType.chat_input)
+                removed += 1
+        logger.info(f"✅ AIBot slash filtered (kept={sorted(keep) if keep else []}, removed={removed})")
+
     logger.info("✅ AIBot cog registered")

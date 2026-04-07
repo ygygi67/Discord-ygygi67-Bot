@@ -1290,7 +1290,7 @@ class Admin(commands.Cog):
                 # Sync globally
                 if force:
                     # Clear existing commands first
-                    await self.bot.tree.clear_commands(guild=None)
+                    self.bot.tree.clear_commands(guild=None)
                     await interaction.followup.send("🗑️ ล้างคำสั่งเก่าทั้งหมดแล้ว", ephemeral=True)
                 
                 synced = await self.bot.tree.sync()
@@ -1301,6 +1301,8 @@ class Admin(commands.Cog):
                 total_synced = 0
                 for guild in self.bot.guilds:
                     try:
+                        if force:
+                            self.bot.tree.clear_commands(guild=guild)
                         guild_synced = await self.bot.tree.sync(guild=guild)
                         total_synced += len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
                     except Exception as guild_error:
@@ -1313,7 +1315,7 @@ class Admin(commands.Cog):
                 # Sync to current guild
                 if force:
                     # Clear existing commands first
-                    await self.bot.tree.clear_commands(guild=interaction.guild)
+                    self.bot.tree.clear_commands(guild=interaction.guild)
                     await interaction.followup.send("🗑️ ล้างคำสั่งเก่าทั้งหมดแล้ว", ephemeral=True)
                 
                 synced = await self.bot.tree.sync(guild=interaction.guild)
@@ -1336,6 +1338,8 @@ class Admin(commands.Cog):
                         total_synced = 0
                         for guild in self.bot.guilds:
                             try:
+                                if force:
+                                    self.bot.tree.clear_commands(guild=guild)
                                 guild_synced = await self.bot.tree.sync(guild=guild)
                                 total_synced += len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
                             except Exception as guild_error:

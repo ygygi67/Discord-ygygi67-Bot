@@ -359,10 +359,23 @@ class AlphaBotBase:
                 for c in global_cmds:
                     merged[c.name] = c
 
+                copy_global_to_guild = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "1").strip().lower() in {"1", "true", "yes", "on"}
                 for gid in known_guild_ids:
                     try:
-                        guild_cmds = await self.tree.sync(guild=discord.Object(id=gid))
-                        logger.info(f"Guild tree synced to {gid} ({len(guild_cmds)} guild commands)")
+                        guild_obj = discord.Object(id=gid)
+                        if copy_global_to_guild:
+                            self.tree.copy_global_to(guild=guild_obj)
+                        guild_cmds = await self.tree.sync(guild=guild_obj)
+                        guild = self.get_guild(gid)
+                        if guild:
+                            guild_name = guild.name
+                        else:
+                            try:
+                                fetched = await self.fetch_guild(gid)
+                                guild_name = fetched.name
+                            except Exception:
+                                guild_name = "Unknown Guild"
+                        logger.info(f"Guild tree synced to {guild_name} ({gid}) ({len(guild_cmds)} guild commands)")
                         for c in guild_cmds:
                             merged[c.name] = c
                     except discord.Forbidden:
