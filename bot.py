@@ -202,6 +202,15 @@ class AlphaBotBase:
             return True
 
         normalized = str(cmd_name).strip().lower()
+        try:
+            guild_id = getattr(interaction, "guild_id", None)
+            channel_id = getattr(interaction, "channel_id", None)
+            user_id = getattr(getattr(interaction, "user", None), "id", None)
+            logger.info(
+                f"[APP_CMD] start /{cmd_name} user={user_id} guild={guild_id} channel={channel_id}"
+            )
+        except Exception:
+            pass
         if normalized in self.disabled_slash_commands:
             msg = f"⛔ คำสั่ง `/{cmd_name}` ถูกปิดใช้งานชั่วคราวโดยแอดมิน (Console Control)"
             try:
@@ -213,6 +222,20 @@ class AlphaBotBase:
                 pass
             return False
         return True
+
+    async def on_app_command_completion(self, interaction: discord.Interaction, command):
+        try:
+            name = getattr(command, "name", None) or getattr(getattr(interaction, "command", None), "name", "unknown")
+            logger.info(f"[APP_CMD] done /{name} user={getattr(interaction.user, 'id', None)} guild={interaction.guild_id}")
+        except Exception:
+            pass
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error):
+        try:
+            cmd = getattr(getattr(interaction, "command", None), "name", "unknown")
+            logger.error(f"[APP_CMD] error /{cmd}: {error}")
+        except Exception:
+            pass
 
     def _save_disabled_commands(self):
         save_console_control({
@@ -362,9 +385,17 @@ class AlphaBotBase:
             commands_list = []
             known_guild_ids = resolve_known_guild_ids()
             if known_guild_ids:
-                # 1) sync global ตามปกติ
-                global_cmds = await self.tree.sync()
-                logger.info(f"Global tree synced ({len(global_cmds)} commands)")
+                # 1) sync global (เปิดใช้ได้ด้วย ENABLE_GLOBAL_SYNC=1)
+                enable_global_sync = os.getenv("ENABLE_GLOBAL_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+                global_cmds = []
+                if enable_global_sync:
+                    global_cmds = await self.tree.sync()
+                    logger.info(f"Global tree synced ({len(global_cmds)} commands)")
+                else:
+                    # สำคัญ: ห้าม clear global commands ตอนปิด global sync
+                    # เพราะจะล้าง command tree local จน guild sync ได้ 0 commands
+                    global_cmds = list(self.tree.get_commands(type=discord.AppCommandType.chat_input))
+                    logger.info(f"Global sync skipped (ENABLE_GLOBAL_SYNC=0) | local commands={len(global_cmds)}")
 
                 # 2) sync guild-scoped commands ทุก guild ที่รู้จัก (แก้เคสคำสั่งบางเซิร์ฟเวอร์ไม่ครบ)
                 merged = {}
@@ -399,6 +430,16 @@ class AlphaBotBase:
             else:
                 commands_list = await self.tree.sync()
                 logger.info("Global tree synced")
+
+            # Fallback: ถ้า API sync คืนค่าว่าง แต่ใน tree มีคำสั่ง local อยู่ ให้ใช้รายการ local แทน
+            if not commands_list:
+                local_cmds = self.tree.get_commands(type=discord.AppCommandType.chat_input)
+                if local_cmds:
+                    commands_list = list(local_cmds)
+                    logger.warning(
+                        f"⚠️ Sync API คืนค่าว่าง แต่พบคำสั่ง local {len(commands_list)} รายการ "
+                        "(ใช้รายการ local แทนเพื่อแสดงผล)"
+                    )
             
             # Print command summary with wrapped lines for readability
             if commands_list:

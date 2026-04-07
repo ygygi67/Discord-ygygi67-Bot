@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+from collections import deque
 
 logger = logging.getLogger("discord_bot")
 MAX_BOARD_USERS = 1000
@@ -30,6 +31,7 @@ class RobloxAddUsersModal(discord.ui.Modal, title="➕ เพิ่มชื่�
         if not await self.view._check_owner(interaction):
             return
         await interaction.response.defer()
+        self.view.last_action = "เพิ่มรายชื่อเอง"
         added, unresolved = await self.view.add_users_from_text(str(self.users_text))
         await self.view.refresh_message()
         msg = f"✅ เพิ่มแล้ว {added} คน"
@@ -66,9 +68,14 @@ class RobloxFetchFriendsModal(discord.ui.Modal, title="👥 ดึงเพื�
             limit = max(1, min(MAX_BOARD_USERS, int(limit_raw)))
         except Exception:
             limit = 100
+        self.view.last_action = f"ดึงเพื่อนจาก {raw}"
         added = await self.view.add_friends_of(raw, limit)
         await self.view.refresh_message()
-        await interaction.followup.send(f"✅ ดึงเพื่อนเพิ่มแล้ว {added} คน", ephemeral=True)
+        msg = f"✅ ดึงเพื่อนเพิ่มแล้ว {added} คน"
+        note = self.view.cog.last_friend_fetch_note
+        if note:
+            msg += f"\n⚠️ {note}"
+        await interaction.followup.send(msg, ephemeral=True)
 
 
 class RobloxPresenceBoardView(discord.ui.View):
@@ -87,13 +94,14 @@ class RobloxPresenceBoardView(discord.ui.View):
         self.page_size = 15
         self.total_pages = 1
         self.total_rows = 0
+        self.last_action = "เริ่มต้น"
         self._update_button_labels()
 
     def _update_button_labels(self):
         self.btn_sort_name.style = discord.ButtonStyle.success if self.sort_by == "name" else discord.ButtonStyle.secondary
         self.btn_sort_latest.style = discord.ButtonStyle.success if self.sort_by == "latest" else discord.ButtonStyle.secondary
         self.btn_sort_game.style = discord.ButtonStyle.success if self.sort_by == "game" else discord.ButtonStyle.secondary
-        self.btn_toggle_auto.label = "⏸️ หยุดอัปเดตอัตโนมัติ" if self.auto_update else "▶️ เริ่มอัปเดตอัตโนมัติ"
+        self.btn_toggle_auto.label = "⏸️ หยุดอัปเดตอัตโนมัติ" if self.auto_update else "▶️ อัปเดตต่ออัตโนมัติ"
         self.btn_sort_order.label = "🔽 Z→A/ใหม่→เก่า" if self.sort_desc else "🔼 A→Z/เก่า→ใหม่"
         self.btn_page.label = f"หน้า {self.page + 1}/{max(1, self.total_pages)}"
         self.btn_first.disabled = self.page <= 0
@@ -115,14 +123,14 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not self.message:
             return
         embed, total_pages, total_rows = await self.cog.build_presence_board_embed(
-            self.user_ids, self.sort_by, page=self.page, page_size=self.page_size, sort_desc=self.sort_desc
+            self.user_ids, self.sort_by, page=self.page, page_size=self.page_size, sort_desc=self.sort_desc, action=self.last_action
         )
         self.total_pages = total_pages
         self.total_rows = total_rows
         if self.page >= self.total_pages:
             self.page = max(0, self.total_pages - 1)
             embed, self.total_pages, self.total_rows = await self.cog.build_presence_board_embed(
-                self.user_ids, self.sort_by, page=self.page, page_size=self.page_size, sort_desc=self.sort_desc
+                self.user_ids, self.sort_by, page=self.page, page_size=self.page_size, sort_desc=self.sort_desc, action=self.last_action
             )
         self._update_button_labels()
         await self.message.edit(embed=embed, view=self)
@@ -198,41 +206,46 @@ class RobloxPresenceBoardView(discord.ui.View):
     async def btn_refresh(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
+        self.last_action = "รีเฟรชข้อมูล"
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="↕️ ชื่อ", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="↕️ ชื่อ", style=discord.ButtonStyle.success, row=3)
     async def btn_sort_name(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.sort_by = "name"
+        self.last_action = "เรียงตามชื่อ"
         self._update_button_labels()
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="🔼 A→Z/เก่า→ใหม่", style=discord.ButtonStyle.secondary, row=0)
-    async def btn_sort_order(self, interaction: discord.Interaction, _: discord.ui.Button):
-        if not await self._check_owner(interaction):
-            return
-        self.sort_desc = not self.sort_desc
-        self._update_button_labels()
-        await interaction.response.defer()
-        await self.refresh_message()
-
-    @discord.ui.button(label="🕒 ล่าสุด", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🕒 ล่าสุด", style=discord.ButtonStyle.secondary, row=3)
     async def btn_sort_latest(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.sort_by = "latest"
+        self.last_action = "เรียงตามออนไลน์ล่าสุด"
         self._update_button_labels()
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="🎮 เวลาเล่น", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🎮 เวลาเล่น", style=discord.ButtonStyle.secondary, row=3)
     async def btn_sort_game(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.sort_by = "game"
+        self.last_action = "เรียงตามเวลาเล่นเกม"
+        self._update_button_labels()
+        await interaction.response.defer()
+        await self.refresh_message()
+
+    @discord.ui.button(label="🔼 A→Z/เก่า→ใหม่", style=discord.ButtonStyle.secondary, row=3)
+    async def btn_sort_order(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        self.sort_desc = not self.sort_desc
+        self.last_action = "สลับทิศทางการเรียง"
         self._update_button_labels()
         await interaction.response.defer()
         await self.refresh_message()
@@ -242,6 +255,7 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.auto_update = not self.auto_update
+        self.last_action = "เปิด/ปิดอัปเดตอัตโนมัติ"
         self._update_button_labels()
         if self.auto_update:
             self.start_auto()
@@ -250,20 +264,22 @@ class RobloxPresenceBoardView(discord.ui.View):
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="⏮ หน้าแรก", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="หน้าแรก", style=discord.ButtonStyle.secondary, row=0)
     async def btn_first(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.page = 0
+        self.last_action = "ไปหน้าแรก"
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="⬅️ ก่อนหน้า", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="⬅️ ก่อนหน้า", style=discord.ButtonStyle.secondary, row=0)
     async def btn_prev(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         if self.page > 0:
             self.page -= 1
+        self.last_action = "ย้อนไปหน้าก่อนหน้า"
         await interaction.response.defer()
         await self.refresh_message()
 
@@ -273,12 +289,13 @@ class RobloxPresenceBoardView(discord.ui.View):
             return
         await interaction.response.send_message("ℹ️ ใช้ปุ่ม ก่อนหน้า/ถัดไป เพื่อเปลี่ยนหน้า", ephemeral=True)
 
-    @discord.ui.button(label="ถัดไป ➡️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="ถัดไป ➡️", style=discord.ButtonStyle.secondary, row=0)
     async def btn_next(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         if self.page < self.total_pages - 1:
             self.page += 1
+        self.last_action = "ไปหน้าถัดไป"
         await interaction.response.defer()
         await self.refresh_message()
 
@@ -287,6 +304,7 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.page = max(0, self.page - 10)
+        self.last_action = "ย้อน 10 หน้า"
         await interaction.response.defer()
         await self.refresh_message()
 
@@ -295,6 +313,7 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.page = max(0, self.page - 5)
+        self.last_action = "ย้อน 5 หน้า"
         await interaction.response.defer()
         await self.refresh_message()
 
@@ -303,6 +322,7 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.page = min(max(0, self.total_pages - 1), self.page + 5)
+        self.last_action = "ข้ามไป 5 หน้า"
         await interaction.response.defer()
         await self.refresh_message()
 
@@ -311,30 +331,32 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.page = min(max(0, self.total_pages - 1), self.page + 10)
+        self.last_action = "ข้ามไป 10 หน้า"
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="⏹ หน้าสุดท้าย", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="ไปหน้าสุดท้าย", style=discord.ButtonStyle.secondary, row=0)
     async def btn_last(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         self.page = max(0, self.total_pages - 1)
+        self.last_action = "ไปหน้าสุดท้าย"
         await interaction.response.defer()
         await self.refresh_message()
 
-    @discord.ui.button(label="➕ เพิ่มชื่อ/ID", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label="➕ เพิ่มชื่อ/ID", style=discord.ButtonStyle.success, row=4)
     async def btn_add_users(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         await interaction.response.send_modal(RobloxAddUsersModal(self))
 
-    @discord.ui.button(label="👥 ดึงเพื่อน", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label="👥 ดึงเพื่อน", style=discord.ButtonStyle.primary, row=4)
     async def btn_add_friends(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
         await interaction.response.send_modal(RobloxFetchFriendsModal(self))
 
-    @discord.ui.button(label="🛑 ปิดแผง", style=discord.ButtonStyle.danger, row=3)
+    @discord.ui.button(label="🛑 ปิดแผง", style=discord.ButtonStyle.danger, row=4)
     async def btn_stop(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
             return
@@ -355,11 +377,14 @@ class FollowersCog(commands.Cog):
             3: "🛠️ อยู่ใน Studio"
         }
         self.tracking_file = 'data/roblox_tracking.json'
+        self.presence_cache_file = 'data/roblox_presence_cache.json'
         self.tracked_users = self.load_tracking_data() # {roblox_id: [channel_id, ...]}
         self.last_presence = {} # {roblox_id: last_presence_type}
         self.game_started_at: Dict[str, float] = {}
         self.game_total_seconds: Dict[str, float] = {}
         self.last_online_ts: Dict[str, float] = {}
+        self.presence_cache = self.load_presence_cache()
+        self.last_friend_fetch_note = ""
         
         # เริ่ม Task ตรวจสอบสถานะ
         self.check_presence_task.start()
@@ -382,6 +407,25 @@ class FollowersCog(commands.Cog):
                 json.dump(self.tracked_users, f, ensure_ascii=False, indent=4)
         except Exception as e:
             print(f"Error saving tracking data: {e}")
+
+    def load_presence_cache(self) -> Dict[str, dict]:
+        try:
+            if os.path.exists(self.presence_cache_file):
+                with open(self.presence_cache_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+        except Exception as e:
+            logger.warning(f"[RobloxBoard] failed to load presence cache: {e}")
+        return {}
+
+    def save_presence_cache(self):
+        try:
+            os.makedirs(os.path.dirname(self.presence_cache_file), exist_ok=True)
+            with open(self.presence_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.presence_cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[RobloxBoard] failed to save presence cache: {e}")
 
     def cog_unload(self):
         self.check_presence_task.cancel()
@@ -483,14 +527,22 @@ class FollowersCog(commands.Cog):
             return None
 
     async def get_friend_ids(self, session: aiohttp.ClientSession, user_id: str, limit: int = 30) -> List[str]:
+        self.last_friend_fetch_note = ""
         ids: List[str] = []
         cursor = None
         seen_cursors = set()
         limit = max(1, min(MAX_BOARD_USERS, limit))
-        empty_pages = 0
+        expected_count = None
+        try:
+            async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/friends/count", timeout=10) as rc:
+                if rc.status == 200:
+                    count_data = await rc.json()
+                    expected_count = int(count_data.get("count", 0))
+        except Exception:
+            expected_count = None
+
         while len(ids) < limit:
-            remaining = min(100, limit - len(ids))
-            url = f"https://friends.roblox.com/v1/users/{user_id}/friends?sortOrder=Asc&limit={remaining}"
+            url = f"https://friends.roblox.com/v1/users/{user_id}/friends?sortOrder=Asc&limit=100"
             if cursor:
                 url += f"&cursor={cursor}"
             try:
@@ -499,22 +551,14 @@ class FollowersCog(commands.Cog):
                         logger.warning(f"[RobloxBoard] friends lookup failed: HTTP {r.status} for user={user_id}")
                         break
                     data = await r.json()
-                    page_added = 0
                     for item in data.get("data", []):
                         fid = str(item.get("id", "")).strip()
                         if fid.isdigit():
                             if fid not in ids:
                                 ids.append(fid)
-                                page_added += 1
                             if len(ids) >= limit:
                                 break
                     next_cursor = data.get("nextPageCursor")
-                    if page_added == 0:
-                        empty_pages += 1
-                    else:
-                        empty_pages = 0
-                    if empty_pages >= 2:
-                        break
                     if not next_cursor:
                         break
                     if next_cursor in seen_cursors:
@@ -525,8 +569,121 @@ class FollowersCog(commands.Cog):
                         break
             except Exception:
                 break
+        if expected_count is not None and expected_count > len(ids):
+            self.last_friend_fetch_note = (
+                f"API ส่งรายชื่อได้ {len(ids)} จากจำนวนรวม {expected_count} "
+                f"(บางบัญชี Roblox ถูกจำกัดผลลัพธ์ใน endpoint นี้)"
+            )
         logger.info(f"[RobloxBoard] fetched friends user={user_id} count={len(ids)} requested={limit}")
         return ids
+
+    async def get_paginated_relation_ids(
+        self,
+        session: aiohttp.ClientSession,
+        url_base: str,
+        limit: int = 1000,
+    ) -> List[str]:
+        ids: List[str] = []
+        seen: set[str] = set()
+        cursor = None
+        limit = max(1, min(5000, limit))
+        while len(ids) < limit:
+            per_page = min(100, limit - len(ids))
+            url = f"{url_base}?sortOrder=Asc&limit={per_page}"
+            if cursor:
+                url += f"&cursor={cursor}"
+            try:
+                async with session.get(url, timeout=20) as r:
+                    if r.status != 200:
+                        break
+                    data = await r.json()
+                    for item in data.get("data", []):
+                        rid = str(item.get("id", "")).strip()
+                        if rid.isdigit() and rid not in seen:
+                            seen.add(rid)
+                            ids.append(rid)
+                            if len(ids) >= limit:
+                                break
+                    cursor = data.get("nextPageCursor")
+                    if not cursor:
+                        break
+            except Exception:
+                break
+        return ids
+
+    async def get_friends_set(self, session: aiohttp.ClientSession, user_id: str, limit: int = 1000) -> set[str]:
+        ids = await self.get_paginated_relation_ids(
+            session,
+            f"https://friends.roblox.com/v1/users/{user_id}/friends",
+            limit=limit
+        )
+        return set(ids)
+
+    async def get_followers_set(self, session: aiohttp.ClientSession, user_id: str, limit: int = 1000) -> set[str]:
+        ids = await self.get_paginated_relation_ids(
+            session,
+            f"https://friends.roblox.com/v1/users/{user_id}/followers",
+            limit=limit
+        )
+        return set(ids)
+
+    async def get_followings_set(self, session: aiohttp.ClientSession, user_id: str, limit: int = 1000) -> set[str]:
+        ids = await self.get_paginated_relation_ids(
+            session,
+            f"https://friends.roblox.com/v1/users/{user_id}/followings",
+            limit=limit
+        )
+        return set(ids)
+
+    async def get_usernames_map(self, session: aiohttp.ClientSession, ids: List[str]) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        chunks: List[List[int]] = []
+        parsed = [int(x) for x in ids if str(x).isdigit()]
+        for i in range(0, len(parsed), 100):
+            chunks.append(parsed[i:i+100])
+        for chunk in chunks:
+            basic = await self.get_users_basic_batch(session, chunk)
+            for uid, data in basic.items():
+                username = data.get("name") or uid
+                out[uid] = username
+        return out
+
+    async def find_friend_path(
+        self,
+        session: aiohttp.ClientSession,
+        start_id: str,
+        target_id: str,
+        max_depth: int = 4,
+        branch_limit: int = 120,
+        node_limit: int = 1200,
+    ) -> Optional[List[str]]:
+        if start_id == target_id:
+            return [start_id]
+
+        queue = deque([(start_id, [start_id], 0)])
+        visited = {start_id}
+        expanded = 0
+
+        while queue:
+            current_id, path, depth = queue.popleft()
+            if depth >= max_depth:
+                continue
+            if expanded >= node_limit:
+                break
+
+            neighbors = await self.get_paginated_relation_ids(
+                session,
+                f"https://friends.roblox.com/v1/users/{current_id}/friends",
+                limit=branch_limit
+            )
+            expanded += 1
+            for nxt in neighbors:
+                if nxt == target_id:
+                    return path + [nxt]
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, path + [nxt], depth + 1))
+        return None
 
     async def resolve_user_input(self, session: aiohttp.ClientSession, raw: str) -> Optional[str]:
         raw = (raw or "").strip()
@@ -543,23 +700,72 @@ class FollowersCog(commands.Cog):
         users: Dict[str, dict] = {}
         if not user_ids:
             return users
-        try:
-            async with session.post(
-                "https://users.roblox.com/v1/users",
-                json={"userIds": user_ids, "excludeBannedUsers": False},
-                timeout=20
-            ) as r:
-                if r.status != 200:
+        for attempt in range(3):
+            try:
+                async with session.post(
+                    "https://users.roblox.com/v1/users",
+                    json={"userIds": user_ids, "excludeBannedUsers": False},
+                    timeout=20
+                ) as r:
+                    if r.status == 200:
+                        payload = await r.json()
+                        for item in payload.get("data", []):
+                            uid = str(item.get("id", "")).strip()
+                            if uid:
+                                users[uid] = item
+                        return users
+                    if r.status == 429:
+                        await asyncio.sleep(0.8 * (attempt + 1))
+                        continue
                     logger.warning(f"[RobloxBoard] users batch lookup failed: HTTP {r.status}")
                     return users
-                payload = await r.json()
-                for item in payload.get("data", []):
-                    uid = str(item.get("id", "")).strip()
-                    if uid:
-                        users[uid] = item
-        except Exception as e:
-            logger.warning(f"[RobloxBoard] users batch lookup error: {e}")
+            except Exception as e:
+                if attempt == 2:
+                    logger.warning(f"[RobloxBoard] users batch lookup error: {e}")
+                await asyncio.sleep(0.3 * (attempt + 1))
         return users
+
+    async def get_presence_batch(self, session: aiohttp.ClientSession, user_ids: List[int]) -> Dict[str, dict]:
+        result: Dict[str, dict] = {}
+        if not user_ids:
+            return result
+
+        # Roblox presence endpoint sometimes returns 400/429 on bigger chunks
+        chunk_size = 100
+        for i in range(0, len(user_ids), chunk_size):
+            chunk = user_ids[i:i + chunk_size]
+            success = False
+            for attempt in range(2):
+                try:
+                    async with session.post("https://presence.roblox.com/v1/presence/users", json={"userIds": chunk}, timeout=15) as r:
+                        if r.status == 200:
+                            payload = await r.json()
+                            for p in payload.get("userPresences", []):
+                                uid = str(p.get("userId"))
+                                result[uid] = p
+                            success = True
+                            break
+                        if r.status == 429:
+                            await asyncio.sleep(0.8 * (attempt + 1))
+                            continue
+                        if r.status == 400 and len(chunk) > 25:
+                            # fallback split half
+                            mid = len(chunk) // 2
+                            left = await self.get_presence_batch(session, chunk[:mid])
+                            right = await self.get_presence_batch(session, chunk[mid:])
+                            result.update(left)
+                            result.update(right)
+                            success = True
+                            break
+                        logger.warning(f"[RobloxBoard] presence lookup failed: HTTP {r.status} (chunk={len(chunk)})")
+                        break
+                except Exception as e:
+                    if attempt == 1:
+                        logger.warning(f"[RobloxBoard] presence lookup error: {e}")
+                    await asyncio.sleep(0.3 * (attempt + 1))
+            if not success:
+                continue
+        return result
 
     def _parse_time(self, iso_text: str) -> float:
         if not iso_text:
@@ -592,21 +798,7 @@ class FollowersCog(commands.Cog):
             ids_int = [int(x) for x in user_ids if str(x).isdigit()]
             if not ids_int:
                 return []
-            presence_by_id: Dict[str, dict] = {}
-            for i in range(0, len(ids_int), 100):
-                chunk = ids_int[i:i+100]
-                url = "https://presence.roblox.com/v1/presence/users"
-                try:
-                    async with session.post(url, json={"userIds": chunk}, timeout=15) as r:
-                        if r.status == 200:
-                            payload = await r.json()
-                            for p in payload.get("userPresences", []):
-                                uid = str(p.get("userId"))
-                                presence_by_id[uid] = p
-                        else:
-                            logger.warning(f"[RobloxBoard] presence lookup failed: HTTP {r.status} (chunk={len(chunk)})")
-                except Exception as e:
-                    logger.warning(f"[RobloxBoard] presence lookup error: {e}")
+            presence_by_id = await self.get_presence_batch(session, ids_int)
 
             basic_by_id: Dict[str, dict] = {}
             for i in range(0, len(ids_int), 100):
@@ -616,13 +808,16 @@ class FollowersCog(commands.Cog):
             for uid in [str(x) for x in ids_int]:
                 basic = basic_by_id.get(uid, {})
                 p = presence_by_id.get(uid, {})
-                p_type = int(p.get("userPresenceType", self.last_presence.get(uid, 0)) or 0)
+                cached = self.presence_cache.get(uid, {})
+                p_type = int(p.get("userPresenceType", self.last_presence.get(uid, cached.get("status_type", 0))) or 0)
                 last_online_iso = p.get("lastOnline") or ""
                 last_online_ts = self._parse_time(last_online_iso)
                 if p_type > 0:
                     self.last_online_ts[uid] = datetime.now(timezone.utc).timestamp()
                 elif last_online_ts > 0:
                     self.last_online_ts[uid] = last_online_ts
+                elif cached.get("last_online_ts"):
+                    self.last_online_ts[uid] = float(cached.get("last_online_ts", 0.0))
                 self.last_presence[uid] = p_type
 
                 if p_type == 2:
@@ -633,19 +828,44 @@ class FollowersCog(commands.Cog):
                         start = self.game_started_at.pop(uid)
                         self.game_total_seconds[uid] = self.game_total_seconds.get(uid, 0.0) + max(0.0, datetime.now(timezone.utc).timestamp() - start)
 
-                rows.append({
-                    "display_name": basic.get("displayName", uid),
-                    "username": basic.get("name", uid),
-                    "user_id": str(basic.get("id", uid)),
-                    "status_text": self.presence_map.get(p_type, "❓ ไม่ทราบ"),
+                display_name = basic.get("displayName") or cached.get("display_name") or uid
+                username = basic.get("name") or cached.get("username") or uid
+                user_id_text = str(basic.get("id") or cached.get("user_id") or uid)
+                status_text = self.presence_map.get(p_type, cached.get("status_text", "❓ ไม่ทราบ"))
+                last_ts = self.last_online_ts.get(uid, 0.0)
+                game_sec = self._game_duration_sec(uid)
+
+                self.presence_cache[uid] = {
+                    "display_name": display_name,
+                    "username": username,
+                    "user_id": user_id_text,
                     "status_type": p_type,
-                    "last_online_ts": self.last_online_ts.get(uid, 0.0),
-                    "game_duration_sec": self._game_duration_sec(uid),
+                    "status_text": status_text,
+                    "last_online_ts": last_ts,
+                    "game_duration_sec": game_sec,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+                rows.append({
+                    "display_name": display_name,
+                    "username": username,
+                    "user_id": user_id_text,
+                    "status_text": status_text,
+                    "status_type": p_type,
+                    "last_online_ts": last_ts,
+                    "game_duration_sec": game_sec,
                 })
+        self.save_presence_cache()
         return rows
 
     async def build_presence_board_embed(
-        self, user_ids: List[str], sort_by: str = "name", page: int = 0, page_size: int = 15, sort_desc: bool = False
+        self,
+        user_ids: List[str],
+        sort_by: str = "name",
+        page: int = 0,
+        page_size: int = 15,
+        sort_desc: bool = False,
+        action: str = "รีเฟรชข้อมูล"
     ) -> Tuple[discord.Embed, int, int]:
         rows = await self.fetch_presence_rows(user_ids)
 
@@ -683,8 +903,16 @@ class FollowersCog(commands.Cog):
             color=discord.Color.blurple(),
             timestamp=datetime.now()
         )
-        direction = "desc" if sort_desc else "asc"
-        embed.set_footer(text=f"รวม {len(rows)} คน | Sort: {sort_by}:{direction} | Page {page + 1}/{total_pages}")
+        sort_label = {
+            "name": "ชื่อ",
+            "latest": "ออนไลน์ล่าสุด",
+            "game": "เวลาเล่น",
+        }.get(sort_by, sort_by)
+        direction = "มาก→น้อย" if sort_desc else "น้อย→มาก"
+        online_count = sum(1 for r in rows if r.get("status_type", 0) > 0)
+        embed.set_footer(
+            text=f"รวม {len(rows)} คน (ออนไลน์ {online_count}) | กำลังเรียง: {sort_label} ({direction}) | หน้า {page + 1}/{total_pages} | โหมด: {action}"
+        )
         return embed, total_pages, total_rows
 
     @app_commands.command(name="เช็คโปรไฟล์roblox", description="ตรวจสอบข้อมูลโปรไฟล์ Roblox และสถานะการติดตาม")
@@ -910,7 +1138,7 @@ class FollowersCog(commands.Cog):
         text = "\n".join([f"- `{rid}`" for rid in tracked_here])
         await interaction.response.send_message(f"📋 **รายชื่อที่กำลังติดตามในช่องนี้:**\n{text}")
 
-    @app_commands.command(name="กระดานสถานะroblox", description="แสดงตารางสถานะ Roblox หลายคนแบบอัปเดตต่อเนื่อง")
+    @app_commands.command(name="สถานะกระดานroblox", description="แสดงตารางสถานะ Roblox หลายคนแบบอัปเดตต่อเนื่อง")
     @app_commands.describe(
         รายชื่อ="ใส่ ID/ชื่อ Roblox ได้หลายคน คั่นด้วย , หรือช่องว่าง",
         ดึงเพื่อนจาก="ใส่ ID/ชื่อ Roblox เพื่อดึงรายชื่อเพื่อนเพิ่มเข้าในตาราง",
@@ -933,6 +1161,10 @@ class FollowersCog(commands.Cog):
         อัปเดตต่อเนื่อง: bool = True,
     ):
         await interaction.response.defer()
+        logger.info(
+            f"[RobloxBoard] command start by={interaction.user.id} guild={interaction.guild_id} channel={interaction.channel_id} "
+            f"sort={เรียงตาม} auto={อัปเดตต่อเนื่อง}"
+        )
 
         tokens = [x.strip() for x in re.split(r"[,\n\r\t ]+", รายชื่อ or "") if x.strip()]
         tokens = tokens[:MAX_BOARD_USERS]
@@ -940,14 +1172,17 @@ class FollowersCog(commands.Cog):
         resolved: List[str] = []
         unresolved: List[str] = []
         async with aiohttp.ClientSession() as session:
-            for token in tokens:
+            for idx, token in enumerate(tokens, start=1):
                 uid = await self.resolve_user_input(session, token)
                 if uid:
                     resolved.append(str(uid))
                 else:
                     unresolved.append(token)
+                if idx % 50 == 0:
+                    logger.info(f"[RobloxBoard] resolving inputs progress {idx}/{len(tokens)}")
 
             if ดึงเพื่อนจาก.strip():
+                logger.info(f"[RobloxBoard] fetching friends seed={ดึงเพื่อนจาก.strip()} limit={จำนวนเพื่อน}")
                 owner_id = await self.resolve_user_input(session, ดึงเพื่อนจาก.strip())
                 if owner_id:
                     friend_ids = await self.get_friend_ids(session, str(owner_id), limit=max(1, min(MAX_BOARD_USERS, จำนวนเพื่อน)))
@@ -975,6 +1210,118 @@ class FollowersCog(commands.Cog):
         )
         if view.auto_update:
             view.start_auto()
+
+    @app_commands.command(name="เครือข่ายroblox", description="ค้นหาเพื่อนร่วมกัน/ติดตามร่วมกัน/เส้นทางเชื่อมโยง Roblox")
+    @app_commands.describe(
+        mode="เลือกประเภทการค้นหา",
+        user_a="ID/ชื่อ Roblox ฝั่ง A",
+        user_b="ID/ชื่อ Roblox ฝั่ง B",
+        max_items="จำนวนที่ดึงต่อฝั่ง (ใช้กับโหมดร่วมกัน)",
+        max_depth="ความลึกสูงสุดในการหาเส้นทาง (ใช้กับโหมดเส้นทาง)",
+        branch_limit="จำนวนเพื่อนสูงสุดที่ขยายต่อโหนด (ใช้กับโหมดเส้นทาง)"
+    )
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="เพื่อนร่วมกัน", value="common_friends"),
+        app_commands.Choice(name="ผู้ติดตามร่วมกัน", value="common_followers"),
+        app_commands.Choice(name="กำลังติดตามร่วมกัน", value="common_followings"),
+        app_commands.Choice(name="เส้นทางเชื่อมโยงเพื่อน", value="path_friends"),
+    ])
+    async def roblox_network(
+        self,
+        interaction: discord.Interaction,
+        mode: str,
+        user_a: str,
+        user_b: str,
+        max_items: int = 1000,
+        max_depth: int = 4,
+        branch_limit: int = 120,
+    ):
+        await interaction.response.defer()
+        logger.info(
+            f"[RobloxNetwork] start by={interaction.user.id} guild={interaction.guild_id} mode={mode} "
+            f"user_a={user_a} user_b={user_b} max_items={max_items} max_depth={max_depth} branch_limit={branch_limit}"
+        )
+        max_items = max(10, min(5000, max_items))
+        max_depth = max(1, min(8, max_depth))
+        branch_limit = max(20, min(500, branch_limit))
+
+        async with aiohttp.ClientSession() as session:
+            aid = await self.resolve_user_input(session, user_a)
+            bid = await self.resolve_user_input(session, user_b)
+            if not aid or not bid:
+                logger.warning(f"[RobloxNetwork] resolve failed aid={aid} bid={bid}")
+                return await interaction.followup.send("❌ ไม่สามารถแปลงผู้ใช้ A/B เป็น Roblox ID ได้")
+
+            names = await self.get_usernames_map(session, [aid, bid])
+            a_name = names.get(aid, aid)
+            b_name = names.get(bid, bid)
+
+            if mode == "path_friends":
+                logger.info(f"[RobloxNetwork] finding path aid={aid} bid={bid} depth={max_depth} branch={branch_limit}")
+                path = await self.find_friend_path(
+                    session, aid, bid, max_depth=max_depth, branch_limit=branch_limit
+                )
+                embed = discord.Embed(
+                    title="🕸️ Roblox Friend Path",
+                    color=discord.Color.blurple(),
+                    timestamp=datetime.now()
+                )
+                if path:
+                    logger.info(f"[RobloxNetwork] path found length={len(path)-1}")
+                    node_map = await self.get_usernames_map(session, path)
+                    chain = " ➜ ".join(f"{node_map.get(uid, uid)} (`{uid}`)" for uid in path)
+                    embed.description = chain[:3900]
+                    embed.add_field(name="ผลลัพธ์", value=f"พบเส้นทางยาว {len(path)-1} ขั้น", inline=False)
+                else:
+                    logger.info("[RobloxNetwork] path not found")
+                    embed.description = f"ไม่พบเส้นทางเพื่อนจาก `{a_name}` ไป `{b_name}` ภายในความลึก {max_depth}"
+                    embed.add_field(name="คำแนะนำ", value="ลองเพิ่ม `max_depth` หรือ `branch_limit` แล้วค้นหาอีกครั้ง", inline=False)
+                return await interaction.followup.send(embed=embed)
+
+            if mode == "common_friends":
+                logger.info(f"[RobloxNetwork] comparing common_friends with max_items={max_items}")
+                set_a, set_b = await asyncio.gather(
+                    self.get_friends_set(session, aid, limit=max_items),
+                    self.get_friends_set(session, bid, limit=max_items),
+                )
+                label = "เพื่อนร่วมกัน"
+            elif mode == "common_followers":
+                logger.info(f"[RobloxNetwork] comparing common_followers with max_items={max_items}")
+                set_a, set_b = await asyncio.gather(
+                    self.get_followers_set(session, aid, limit=max_items),
+                    self.get_followers_set(session, bid, limit=max_items),
+                )
+                label = "ผู้ติดตามร่วมกัน"
+            else:  # common_followings
+                logger.info(f"[RobloxNetwork] comparing common_followings with max_items={max_items}")
+                set_a, set_b = await asyncio.gather(
+                    self.get_followings_set(session, aid, limit=max_items),
+                    self.get_followings_set(session, bid, limit=max_items),
+                )
+                label = "กำลังติดตามร่วมกัน"
+
+            common_ids = sorted(set_a.intersection(set_b), key=lambda x: int(x))
+            logger.info(f"[RobloxNetwork] common result count={len(common_ids)}")
+            preview_ids = common_ids[:50]
+            preview_map = await self.get_usernames_map(session, preview_ids) if preview_ids else {}
+            lines = [f"- {preview_map.get(uid, uid)} (`{uid}`)" for uid in preview_ids]
+            embed = discord.Embed(
+                title=f"🔎 Roblox Network • {label}",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            embed.add_field(
+                name="คู่ที่เปรียบเทียบ",
+                value=f"A: {a_name} (`{aid}`)\nB: {b_name} (`{bid}`)",
+                inline=False
+            )
+            if common_ids:
+                embed.add_field(name=f"พบทั้งหมด {len(common_ids)} รายการ", value="\n".join(lines)[:1024], inline=False)
+                if len(common_ids) > len(preview_ids):
+                    embed.set_footer(text=f"แสดง {len(preview_ids)} จากทั้งหมด {len(common_ids)}")
+            else:
+                embed.description = "ไม่พบรายการร่วมกันจากการค้นหานี้"
+            await interaction.followup.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(FollowersCog(bot))
