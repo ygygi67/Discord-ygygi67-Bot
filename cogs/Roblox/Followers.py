@@ -78,6 +78,7 @@ class RobloxPresenceBoardView(discord.ui.View):
         self.owner_id = owner_id
         self.user_ids = user_ids
         self.sort_by = sort_by
+        self.sort_desc = False
         self.auto_update = auto_update
         self.message: Optional[discord.Message] = None
         self.auto_task: Optional[asyncio.Task] = None
@@ -93,7 +94,9 @@ class RobloxPresenceBoardView(discord.ui.View):
         self.btn_sort_latest.style = discord.ButtonStyle.success if self.sort_by == "latest" else discord.ButtonStyle.secondary
         self.btn_sort_game.style = discord.ButtonStyle.success if self.sort_by == "game" else discord.ButtonStyle.secondary
         self.btn_toggle_auto.label = "⏸️ หยุดอัปเดตอัตโนมัติ" if self.auto_update else "▶️ เริ่มอัปเดตอัตโนมัติ"
+        self.btn_sort_order.label = "🔽 Z→A/ใหม่→เก่า" if self.sort_desc else "🔼 A→Z/เก่า→ใหม่"
         self.btn_page.label = f"หน้า {self.page + 1}/{max(1, self.total_pages)}"
+        self.btn_first.disabled = self.page <= 0
         self.btn_prev.disabled = self.page <= 0
         self.btn_next.disabled = self.page >= max(0, self.total_pages - 1)
         self.btn_jump_back_5.disabled = self.page <= 0
@@ -112,14 +115,14 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not self.message:
             return
         embed, total_pages, total_rows = await self.cog.build_presence_board_embed(
-            self.user_ids, self.sort_by, page=self.page, page_size=self.page_size
+            self.user_ids, self.sort_by, page=self.page, page_size=self.page_size, sort_desc=self.sort_desc
         )
         self.total_pages = total_pages
         self.total_rows = total_rows
         if self.page >= self.total_pages:
             self.page = max(0, self.total_pages - 1)
             embed, self.total_pages, self.total_rows = await self.cog.build_presence_board_embed(
-                self.user_ids, self.sort_by, page=self.page, page_size=self.page_size
+                self.user_ids, self.sort_by, page=self.page, page_size=self.page_size, sort_desc=self.sort_desc
             )
         self._update_button_labels()
         await self.message.edit(embed=embed, view=self)
@@ -207,6 +210,15 @@ class RobloxPresenceBoardView(discord.ui.View):
         await interaction.response.defer()
         await self.refresh_message()
 
+    @discord.ui.button(label="🔼 A→Z/เก่า→ใหม่", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_sort_order(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        self.sort_desc = not self.sort_desc
+        self._update_button_labels()
+        await interaction.response.defer()
+        await self.refresh_message()
+
     @discord.ui.button(label="🕒 ล่าสุด", style=discord.ButtonStyle.secondary, row=0)
     async def btn_sort_latest(self, interaction: discord.Interaction, _: discord.ui.Button):
         if not await self._check_owner(interaction):
@@ -235,6 +247,14 @@ class RobloxPresenceBoardView(discord.ui.View):
             self.start_auto()
         else:
             self.stop_auto()
+        await interaction.response.defer()
+        await self.refresh_message()
+
+    @discord.ui.button(label="⏮ หน้าแรก", style=discord.ButtonStyle.secondary, row=1)
+    async def btn_first(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not await self._check_owner(interaction):
+            return
+        self.page = 0
         await interaction.response.defer()
         await self.refresh_message()
 
@@ -465,7 +485,9 @@ class FollowersCog(commands.Cog):
     async def get_friend_ids(self, session: aiohttp.ClientSession, user_id: str, limit: int = 30) -> List[str]:
         ids: List[str] = []
         cursor = None
+        seen_cursors = set()
         limit = max(1, min(MAX_BOARD_USERS, limit))
+        empty_pages = 0
         while len(ids) < limit:
             remaining = min(100, limit - len(ids))
             url = f"https://friends.roblox.com/v1/users/{user_id}/friends?sortOrder=Asc&limit={remaining}"
@@ -474,26 +496,70 @@ class FollowersCog(commands.Cog):
             try:
                 async with session.get(url, timeout=15) as r:
                     if r.status != 200:
+                        logger.warning(f"[RobloxBoard] friends lookup failed: HTTP {r.status} for user={user_id}")
                         break
                     data = await r.json()
+                    page_added = 0
                     for item in data.get("data", []):
                         fid = str(item.get("id", "")).strip()
                         if fid.isdigit():
-                            ids.append(fid)
+                            if fid not in ids:
+                                ids.append(fid)
+                                page_added += 1
                             if len(ids) >= limit:
                                 break
-                    cursor = data.get("nextPageCursor")
+                    next_cursor = data.get("nextPageCursor")
+                    if page_added == 0:
+                        empty_pages += 1
+                    else:
+                        empty_pages = 0
+                    if empty_pages >= 2:
+                        break
+                    if not next_cursor:
+                        break
+                    if next_cursor in seen_cursors:
+                        break
+                    seen_cursors.add(next_cursor)
+                    cursor = next_cursor
                     if not cursor:
                         break
             except Exception:
                 break
+        logger.info(f"[RobloxBoard] fetched friends user={user_id} count={len(ids)} requested={limit}")
         return ids
 
     async def resolve_user_input(self, session: aiohttp.ClientSession, raw: str) -> Optional[str]:
-        match = re.search(r"(\d{4,})", raw or "")
-        if match:
-            return match.group(1)
-        return await self.get_user_id_by_name(session, (raw or "").strip())
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        if raw.isdigit():
+            return raw
+        url_match = re.search(r"roblox\.com/users/(\d+)", raw, flags=re.IGNORECASE)
+        if url_match:
+            return url_match.group(1)
+        return await self.get_user_id_by_name(session, raw)
+
+    async def get_users_basic_batch(self, session: aiohttp.ClientSession, user_ids: List[int]) -> Dict[str, dict]:
+        users: Dict[str, dict] = {}
+        if not user_ids:
+            return users
+        try:
+            async with session.post(
+                "https://users.roblox.com/v1/users",
+                json={"userIds": user_ids, "excludeBannedUsers": False},
+                timeout=20
+            ) as r:
+                if r.status != 200:
+                    logger.warning(f"[RobloxBoard] users batch lookup failed: HTTP {r.status}")
+                    return users
+                payload = await r.json()
+                for item in payload.get("data", []):
+                    uid = str(item.get("id", "")).strip()
+                    if uid:
+                        users[uid] = item
+        except Exception as e:
+            logger.warning(f"[RobloxBoard] users batch lookup error: {e}")
+        return users
 
     def _parse_time(self, iso_text: str) -> float:
         if not iso_text:
@@ -530,36 +596,34 @@ class FollowersCog(commands.Cog):
             for i in range(0, len(ids_int), 100):
                 chunk = ids_int[i:i+100]
                 url = "https://presence.roblox.com/v1/presence/users"
-                async with session.post(url, json={"userIds": chunk}, timeout=15) as r:
-                    if r.status == 200:
-                        payload = await r.json()
-                        for p in payload.get("userPresences", []):
-                            uid = str(p.get("userId"))
-                            presence_by_id[uid] = p
+                try:
+                    async with session.post(url, json={"userIds": chunk}, timeout=15) as r:
+                        if r.status == 200:
+                            payload = await r.json()
+                            for p in payload.get("userPresences", []):
+                                uid = str(p.get("userId"))
+                                presence_by_id[uid] = p
+                        else:
+                            logger.warning(f"[RobloxBoard] presence lookup failed: HTTP {r.status} (chunk={len(chunk)})")
+                except Exception as e:
+                    logger.warning(f"[RobloxBoard] presence lookup error: {e}")
 
             basic_by_id: Dict[str, dict] = {}
             for i in range(0, len(ids_int), 100):
                 chunk = ids_int[i:i+100]
-                ids_query = ",".join(str(x) for x in chunk)
-                try:
-                    async with session.get(f"https://users.roblox.com/v1/users?userIds={ids_query}", timeout=15) as r:
-                        if r.status == 200:
-                            payload = await r.json()
-                            for u in payload.get("data", []):
-                                basic_by_id[str(u.get("id"))] = u
-                except Exception:
-                    continue
+                basic_by_id.update(await self.get_users_basic_batch(session, chunk))
 
             for uid in [str(x) for x in ids_int]:
                 basic = basic_by_id.get(uid, {})
                 p = presence_by_id.get(uid, {})
-                p_type = int(p.get("userPresenceType", 0) or 0)
+                p_type = int(p.get("userPresenceType", self.last_presence.get(uid, 0)) or 0)
                 last_online_iso = p.get("lastOnline") or ""
                 last_online_ts = self._parse_time(last_online_iso)
                 if p_type > 0:
                     self.last_online_ts[uid] = datetime.now(timezone.utc).timestamp()
                 elif last_online_ts > 0:
                     self.last_online_ts[uid] = last_online_ts
+                self.last_presence[uid] = p_type
 
                 if p_type == 2:
                     if uid not in self.game_started_at:
@@ -581,16 +645,16 @@ class FollowersCog(commands.Cog):
         return rows
 
     async def build_presence_board_embed(
-        self, user_ids: List[str], sort_by: str = "name", page: int = 0, page_size: int = 15
+        self, user_ids: List[str], sort_by: str = "name", page: int = 0, page_size: int = 15, sort_desc: bool = False
     ) -> Tuple[discord.Embed, int, int]:
         rows = await self.fetch_presence_rows(user_ids)
 
         if sort_by == "latest":
-            rows.sort(key=lambda x: (x["last_online_ts"], x["display_name"].lower()), reverse=True)
+            rows.sort(key=lambda x: (x["last_online_ts"], x["display_name"].lower()), reverse=sort_desc)
         elif sort_by == "game":
-            rows.sort(key=lambda x: (x["game_duration_sec"], x["display_name"].lower()), reverse=True)
+            rows.sort(key=lambda x: (x["game_duration_sec"], x["display_name"].lower()), reverse=sort_desc)
         else:
-            rows.sort(key=lambda x: x["display_name"].lower())
+            rows.sort(key=lambda x: x["display_name"].lower(), reverse=sort_desc)
 
         total_rows = len(rows)
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
@@ -619,7 +683,8 @@ class FollowersCog(commands.Cog):
             color=discord.Color.blurple(),
             timestamp=datetime.now()
         )
-        embed.set_footer(text=f"รวม {len(rows)} คน | Sort: {sort_by} | Page {page + 1}/{total_pages}")
+        direction = "desc" if sort_desc else "asc"
+        embed.set_footer(text=f"รวม {len(rows)} คน | Sort: {sort_by}:{direction} | Page {page + 1}/{total_pages}")
         return embed, total_pages, total_rows
 
     @app_commands.command(name="เช็คโปรไฟล์roblox", description="ตรวจสอบข้อมูลโปรไฟล์ Roblox และสถานะการติดตาม")
