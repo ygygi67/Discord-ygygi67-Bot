@@ -134,6 +134,18 @@ class RobloxPresenceBoardView(discord.ui.View):
             )
         self._update_button_labels()
         await self.message.edit(embed=embed, view=self)
+        self.cog.upsert_presence_board(
+            guild_id=getattr(self.message.guild, "id", None),
+            channel_id=self.message.channel.id,
+            message_id=self.message.id,
+            owner_id=self.owner_id,
+            user_ids=self.user_ids,
+            sort_by=self.sort_by,
+            sort_desc=self.sort_desc,
+            page=self.page,
+            page_size=self.page_size,
+            auto_update=self.auto_update,
+        )
         logger.info(f"[RobloxBoard] refreshed owner={self.owner_id} users={len(self.user_ids)} page={self.page+1}/{self.total_pages} sort={self.sort_by}")
 
     async def add_users_from_text(self, raw_text: str) -> Tuple[int, List[str]]:
@@ -193,7 +205,7 @@ class RobloxPresenceBoardView(discord.ui.View):
         self.auto_task = None
 
     async def on_timeout(self):
-        self.stop_auto()
+        # หมดเวลาเฉพาะปุ่มกด แต่ยังคงสถานะ auto-update ใน config ไว้
         for item in self.children:
             item.disabled = True
         if self.message:
@@ -361,6 +373,18 @@ class RobloxPresenceBoardView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.stop_auto()
+        self.cog.upsert_presence_board(
+            guild_id=getattr(interaction.guild, "id", None),
+            channel_id=interaction.channel_id,
+            message_id=interaction.message.id if interaction.message else 0,
+            owner_id=self.owner_id,
+            user_ids=self.user_ids,
+            sort_by=self.sort_by,
+            sort_desc=self.sort_desc,
+            page=self.page,
+            page_size=self.page_size,
+            auto_update=False,
+        )
         for item in self.children:
             item.disabled = True
         await interaction.response.defer()
@@ -378,16 +402,19 @@ class FollowersCog(commands.Cog):
         }
         self.tracking_file = 'data/roblox_tracking.json'
         self.presence_cache_file = 'data/roblox_presence_cache.json'
+        self.presence_boards_file = 'data/roblox_presence_boards.json'
         self.tracked_users = self.load_tracking_data() # {roblox_id: [channel_id, ...]}
         self.last_presence = {} # {roblox_id: last_presence_type}
         self.game_started_at: Dict[str, float] = {}
         self.game_total_seconds: Dict[str, float] = {}
         self.last_online_ts: Dict[str, float] = {}
         self.presence_cache = self.load_presence_cache()
+        self.presence_boards = self.load_presence_boards()
         self.last_friend_fetch_note = ""
         
         # เริ่ม Task ตรวจสอบสถานะ
         self.check_presence_task.start()
+        self.refresh_presence_boards_task.start()
 
     def load_tracking_data(self):
         """โหลดข้อมูลการติดตามจากไฟล์"""
@@ -427,8 +454,59 @@ class FollowersCog(commands.Cog):
         except Exception as e:
             logger.warning(f"[RobloxBoard] failed to save presence cache: {e}")
 
+    def load_presence_boards(self) -> Dict[str, dict]:
+        try:
+            if os.path.exists(self.presence_boards_file):
+                with open(self.presence_boards_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+        except Exception as e:
+            logger.warning(f"[RobloxBoard] failed to load board config: {e}")
+        return {}
+
+    def save_presence_boards(self):
+        try:
+            os.makedirs(os.path.dirname(self.presence_boards_file), exist_ok=True)
+            with open(self.presence_boards_file, 'w', encoding='utf-8') as f:
+                json.dump(self.presence_boards, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[RobloxBoard] failed to save board config: {e}")
+
+    def upsert_presence_board(
+        self,
+        guild_id: Optional[int],
+        channel_id: int,
+        message_id: int,
+        owner_id: int,
+        user_ids: List[str],
+        sort_by: str,
+        sort_desc: bool,
+        page: int,
+        page_size: int,
+        auto_update: bool,
+    ):
+        if not channel_id or not message_id:
+            return
+        key = str(message_id)
+        self.presence_boards[key] = {
+            "guild_id": guild_id,
+            "channel_id": channel_id,
+            "message_id": message_id,
+            "owner_id": owner_id,
+            "user_ids": [str(x) for x in user_ids][:MAX_BOARD_USERS],
+            "sort_by": sort_by,
+            "sort_desc": bool(sort_desc),
+            "page": int(max(0, page)),
+            "page_size": int(max(5, min(25, page_size))),
+            "auto_update": bool(auto_update),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.save_presence_boards()
+
     def cog_unload(self):
         self.check_presence_task.cancel()
+        self.refresh_presence_boards_task.cancel()
 
     async def get_user_info(self, session, user_id):
         """ดึงข้อมูลผู้ใช้จาก Roblox API แบบ Asynchronous"""
@@ -1032,6 +1110,56 @@ class FollowersCog(commands.Cog):
         except Exception as e:
             print(f"Presence Task Traceback Error: {e}")
 
+    @tasks.loop(seconds=45)
+    async def refresh_presence_boards_task(self):
+        if not self.presence_boards:
+            return
+        changed = False
+        remove_keys: List[str] = []
+        for key, cfg in list(self.presence_boards.items()):
+            if not cfg.get("auto_update", True):
+                continue
+            channel_id = int(cfg.get("channel_id", 0) or 0)
+            message_id = int(cfg.get("message_id", 0) or 0)
+            if not channel_id:
+                remove_keys.append(key)
+                continue
+            try:
+                channel = self.bot.get_channel(channel_id)
+                if channel is None:
+                    channel = await self.bot.fetch_channel(channel_id)
+                embed, total_pages, _ = await self.build_presence_board_embed(
+                    user_ids=cfg.get("user_ids", []),
+                    sort_by=cfg.get("sort_by", "name"),
+                    page=int(cfg.get("page", 0)),
+                    page_size=int(cfg.get("page_size", 15)),
+                    sort_desc=bool(cfg.get("sort_desc", False)),
+                    action="อัปเดตต่อเนื่อง (หลังรีบูต)"
+                )
+                msg = None
+                if message_id:
+                    try:
+                        msg = await channel.fetch_message(message_id)
+                    except Exception:
+                        msg = None
+                if msg is None:
+                    msg = await channel.send(embed=embed)
+                    cfg["message_id"] = msg.id
+                    changed = True
+                else:
+                    await msg.edit(embed=embed, view=None)
+                cfg["page"] = min(int(cfg.get("page", 0)), max(0, total_pages - 1))
+                cfg["updated_at"] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"[RobloxBoard] persistent update channel={channel_id} message={cfg.get('message_id')}")
+                await asyncio.sleep(0.6)
+            except Exception as e:
+                logger.warning(f"[RobloxBoard] persistent update failed key={key}: {e}")
+        for key in remove_keys:
+            self.presence_boards.pop(key, None)
+            changed = True
+        if changed:
+            self.save_presence_boards()
+
     async def notify_presence_change(self, roblox_id, p_type, location):
         """แจ้งเตือนการเปลี่ยนแปลงไปยังทุก Channel ที่เลือกไว้"""
         channels_ids = self.tracked_users.get(roblox_id, [])
@@ -1204,6 +1332,18 @@ class FollowersCog(commands.Cog):
 
         msg = await interaction.followup.send(embed=embed, view=view)
         view.message = msg
+        self.upsert_presence_board(
+            guild_id=interaction.guild_id,
+            channel_id=interaction.channel_id,
+            message_id=msg.id,
+            owner_id=interaction.user.id,
+            user_ids=resolved,
+            sort_by=เรียงตาม,
+            sort_desc=view.sort_desc,
+            page=0,
+            page_size=view.page_size,
+            auto_update=อัปเดตต่อเนื่อง,
+        )
         logger.info(
             f"[RobloxBoard] created by={interaction.user.id} guild={interaction.guild_id} channel={interaction.channel_id} "
             f"users={len(resolved)} sort={เรียงตาม} auto={อัปเดตต่อเนื่อง}"
