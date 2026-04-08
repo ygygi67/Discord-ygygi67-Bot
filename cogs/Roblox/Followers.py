@@ -1272,7 +1272,13 @@ class FollowersCog(commands.Cog):
         display_name = stats.get("display_name", str(user_id))
         username = stats.get("username", str(user_id))
         embed.add_field(name="ผู้ใช้", value=f"{display_name} (@{username})\n`{user_id}`", inline=False)
-        embed.add_field(name="ออนไลน์ล่าสุด", value=(discord.utils.format_dt(last_online, "F") if last_online else "ยังไม่มีข้อมูล"), inline=False)
+        if last_online:
+            absolute_ts = discord.utils.format_dt(last_online, "F")
+            relative_ts = discord.utils.format_dt(last_online, "R")
+            last_online_value = f"{absolute_ts}\n({relative_ts})"
+        else:
+            last_online_value = "ยังไม่มีข้อมูล"
+        embed.add_field(name="ออนไลน์ล่าสุด", value=last_online_value, inline=False)
         embed.add_field(name="เวลาเล่น 1 วัน", value=f"`{day_h:.2f}` ชั่วโมง", inline=True)
         embed.add_field(name="เวลาเล่น 1 สัปดาห์", value=f"`{week_h:.2f}` ชั่วโมง", inline=True)
         embed.add_field(name="เวลาเล่น 1 เดือน", value=f"`{month_h:.2f}` ชั่วโมง", inline=True)
@@ -1309,40 +1315,45 @@ class FollowersCog(commands.Cog):
             
         try:
             async with aiohttp.ClientSession() as session:
-                # แปลงรหัสคนทั้งหมดเป็น List เพื่อทำการ Query แบบ Batch
-                ids = [int(rid) for rid in self.tracked_users.keys()]
-                
-                # Roblox Presence API (Batch up to 100)
-                url = "https://presence.roblox.com/v1/presence/users"
-                async with session.post(url, json={"userIds": ids}, timeout=15) as r:
-                    if r.status == 200:
-                        data = await r.json()
-                        presences = data.get("userPresences", [])
-                        
-                        for p in presences:
-                            rid = str(p.get("userId"))
-                            ptype = p.get("userPresenceType", 0)
-                            location = p.get("lastLocation", "ไม่ทราบ")
-                            last_online_ts = self._parse_time(str(p.get("lastOnline") or ""))
-                            self._record_activity_sample(
-                                user_id=rid,
-                                status_type=ptype,
-                                location=location,
-                                last_online_ts=last_online_ts
-                            )
-                            
-                            # ตรวจสอบว่ามีข้อมูลการเปลี่ยนแปลงไหม
-                            if rid in self.last_presence and self.last_presence[rid] != ptype:
-                                # มีการเปลี่ยนแปลง! ส่งแจ้งเตือน
-                                await self.notify_presence_change(rid, ptype, location)
-                            
-                            # อัปเดตสถานะล่าสุด
-                            self.last_presence[rid] = ptype
-                        self.save_activity_data()
-                    else:
-                        print(f"Presence Task Error: status {r.status}")
+                # แปลงรหัสคนทั้งหมดเป็น List และใช้ helper ที่มี retry/backoff + split chunk อัตโนมัติ
+                ids = [int(rid) for rid in self.tracked_users.keys() if str(rid).isdigit()]
+                if not ids:
+                    return
+
+                presence_map = await self.get_presence_batch(session, ids)
+                if not presence_map:
+                    logger.warning("[PresenceTask] empty presence response (possibly rate-limited)")
+                    return
+
+                for rid_int in ids:
+                    rid = str(rid_int)
+                    p = presence_map.get(rid, {})
+                    ptype = int(p.get("userPresenceType", 0) or 0)
+                    location = str(p.get("lastLocation", "ไม่ทราบ"))
+                    last_online_ts = self._parse_time(str(p.get("lastOnline") or ""))
+                    self._record_activity_sample(
+                        user_id=rid,
+                        status_type=ptype,
+                        location=location,
+                        last_online_ts=last_online_ts
+                    )
+
+                    # ตรวจสอบว่ามีข้อมูลการเปลี่ยนแปลงไหม
+                    if rid in self.last_presence and self.last_presence[rid] != ptype:
+                        await self.notify_presence_change(rid, ptype, location)
+
+                    # อัปเดตสถานะล่าสุด
+                    self.last_presence[rid] = ptype
+
+                self.save_activity_data()
+        except aiohttp.ClientConnectionError:
+            # มักเกิดตอนกำลัง restart/shutdown connector
+            logger.info("[PresenceTask] connector closed during restart/shutdown")
+        except asyncio.CancelledError:
+            # task ถูกยกเลิกตอน unload ปกติ
+            return
         except Exception as e:
-            print(f"Presence Task Traceback Error: {e}")
+            logger.warning(f"[PresenceTask] error: {e}")
 
     @tasks.loop(seconds=45)
     async def refresh_presence_boards_task(self):
