@@ -88,6 +88,9 @@
 - ✅ แก้บัค Slash Command Roblox บางครั้งเด้ง `Unknown interaction (10062)`
   - เพิ่ม safe defer ในคำสั่ง `/โปรไฟล์กิจกรรมroblox` เพื่อกันเคส interaction หมดอายุ
   - เมื่อ defer ไม่สำเร็จ ระบบจะ log เป็น warning และจบคำสั่งอย่างปลอดภัย (ไม่โยน traceback)
+- ✅ แก้บัค `ServerLogger` ในเหตุการณ์เสียง (`on_voice_state_update`)
+  - กันเคส `aiohttp.client_exceptions.ClientConnectionError: Connector is closed` ระหว่างอ่าน Audit Log
+  - ปรับให้ fallback เป็น warning log และไม่ทำให้ event handler ล่ม
 - ✅ แก้บัค **Roblox Presence Board หลังรีบูต**
   - บอร์ดที่บอทส่งไว้จะรีไฮเดรตปุ่มกลับมาอัตโนมัติ (ไม่เหลือแค่ embed)
   - เพิ่มระบบบันทึกสถานะบอร์ด/กิจกรรมลงไฟล์ข้อมูลเพื่อให้ทำงานต่อหลังรีสตาร์ท

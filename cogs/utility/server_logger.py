@@ -138,6 +138,9 @@ class ServerLogger(commands.Cog):
                     return entry
         except (discord.Forbidden, discord.HTTPException):
             pass
+        except Exception as e:
+            # ป้องกัน event handler ล่มในช่วง reconnect/shutdown (เช่น Connector is closed)
+            logger.warning(f"[ServerLogger] audit log fetch skipped ({action}): {e}")
         return None
 
     def _add_field(self, embed: discord.Embed, name: str, value: str, inline: bool = False) -> None:
@@ -863,10 +866,13 @@ class ServerLogger(commands.Cog):
         else: action = discord.AuditLogAction.emoji_update
         
         if action:
-            async for e in guild.audit_logs(limit=1, action=action):
-                if (self._now() - e.created_at).total_seconds() < 10:
-                    embed.add_field(name="ดำเนินการโดย", value=e.user.mention, inline=False)
-                    break
+            try:
+                async for e in guild.audit_logs(limit=1, action=action):
+                    if (self._now() - e.created_at).total_seconds() < 10:
+                        embed.add_field(name="ดำเนินการโดย", value=e.user.mention, inline=False)
+                        break
+            except Exception as e:
+                logger.warning(f"[ServerLogger] emoji audit log lookup skipped: {e}")
 
         before_set, after_set = set(before), set(after)
 
@@ -902,10 +908,13 @@ class ServerLogger(commands.Cog):
         else: action = discord.AuditLogAction.sticker_update
 
         if action:
-            async for e in guild.audit_logs(limit=1, action=action):
-                if (self._now() - e.created_at).total_seconds() < 10:
-                    embed.add_field(name="ดำเนินการโดย", value=e.user.mention, inline=False)
-                    break
+            try:
+                async for e in guild.audit_logs(limit=1, action=action):
+                    if (self._now() - e.created_at).total_seconds() < 10:
+                        embed.add_field(name="ดำเนินการโดย", value=e.user.mention, inline=False)
+                        break
+            except Exception as e:
+                logger.warning(f"[ServerLogger] sticker audit log lookup skipped: {e}")
             new_s = next((s for s in after if s not in before), None)
             if new_s:
                 embed.color = discord.Color.green()
