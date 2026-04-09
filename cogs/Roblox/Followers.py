@@ -940,6 +940,23 @@ class FollowersCog(commands.Cog):
                 await asyncio.sleep(0.3 * (attempt + 1))
         return users
 
+    async def get_avatar_headshot(self, session: aiohttp.ClientSession, user_id: str) -> Optional[str]:
+        try:
+            url = (
+                "https://thumbnails.roblox.com/v1/users/avatar-headshot"
+                f"?userIds={user_id}&size=150x150&format=Png&isCircular=false"
+            )
+            async with session.get(url, timeout=15) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+                rows = data.get("data", [])
+                if rows:
+                    return rows[0].get("imageUrl")
+        except Exception:
+            return None
+        return None
+
     async def get_presence_batch(self, session: aiohttp.ClientSession, user_ids: List[int]) -> Dict[str, dict]:
         result: Dict[str, dict] = {}
         if not user_ids:
@@ -1221,16 +1238,19 @@ class FollowersCog(commands.Cog):
             
             await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="กิจกรรมโปรไฟล์roblox", description="สรุปการออนไลน์และเวลาเล่น Roblox จากข้อมูลติดตาม")
+    @app_commands.command(name="โปรไฟล์กิจกรรมroblox", description="สรุปการออนไลน์และเวลาเล่น Roblox จากข้อมูลติดตาม")
     @app_commands.describe(user="ID/ชื่อ/ลิงก์ Roblox ที่ต้องการดู", auto_track="ถ้ายังไม่มีในฐานข้อมูล ให้เริ่มติดตามอัตโนมัติ")
     async def roblox_activity_profile(self, interaction: discord.Interaction, user: str, auto_track: bool = True):
         await interaction.response.defer()
+        existed_before = False
         async with aiohttp.ClientSession() as session:
             user_id = await self.resolve_user_input(session, user)
             if not user_id:
                 return await interaction.followup.send(f"❌ ไม่สามารถแปลงผู้ใช้ `{user}` เป็น Roblox ID ได้")
+            existed_before = str(user_id) in self.activity_data
             basic = await self.get_users_basic_batch(session, [int(user_id)])
             presence = await self.get_presence_batch(session, [int(user_id)])
+            avatar_url = await self.get_avatar_headshot(session, str(user_id))
 
         p = presence.get(str(user_id), {})
         basic_user = basic.get(str(user_id), {})
@@ -1248,14 +1268,14 @@ class FollowersCog(commands.Cog):
 
         stats = self._compute_activity_stats(str(user_id))
         auto_track_note = ""
-        if auto_track and stats.get("sample_count", 0) <= 1:
+        if auto_track and not existed_before:
             rid_str = str(user_id)
             cid_str = str(interaction.channel_id)
             channels = self.tracked_users.setdefault(rid_str, [])
             if cid_str not in channels:
                 channels.append(cid_str)
                 self.save_tracking_data()
-                auto_track_note = "ยังไม่มีข้อมูลสะสมมากพอ ระบบเริ่มเพิ่มผู้ใช้นี้เข้ารายการติดตามในช่องนี้แล้ว ✅"
+            auto_track_note = "ยังไม่มีข้อมูลเดิมในระบบ ระบบเริ่มติดตามและเก็บข้อมูลให้อัตโนมัติแล้ว ✅"
 
         totals = stats.get("totals", {})
         day_h = totals.get("day", 0.0) / 3600
@@ -1298,6 +1318,8 @@ class FollowersCog(commands.Cog):
                 location_text = f" • {location}" if location else ""
                 session_lines.append(f"- {discord.utils.format_dt(dt, 'R')}{location_text}")
             embed.add_field(name="เข้าเล่นเกมล่าสุด", value="\n".join(session_lines)[:1024], inline=False)
+        if avatar_url:
+            embed.set_thumbnail(url=avatar_url)
 
         footer = f"เก็บตัวอย่างแล้ว {stats.get('sample_count', 0)} จุด"
         if auto_track_note:
