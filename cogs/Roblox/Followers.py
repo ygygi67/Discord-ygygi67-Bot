@@ -422,6 +422,28 @@ class FollowersCog(commands.Cog):
         self.check_presence_task.start()
         self.refresh_presence_boards_task.start()
 
+    async def _safe_defer(self, interaction: discord.Interaction, *, thinking: bool = True, ephemeral: bool = False) -> bool:
+        """Defer interaction safely and avoid crashing on expired interactions."""
+        if interaction.response.is_done():
+            return True
+        try:
+            await interaction.response.defer(thinking=thinking, ephemeral=ephemeral)
+            return True
+        except discord.NotFound:
+            logger.warning(
+                "[Interaction] defer failed: Unknown interaction (possibly expired) "
+                f"command_id={getattr(interaction.command, 'name', 'unknown')} "
+                f"user_id={getattr(interaction.user, 'id', 'unknown')}"
+            )
+            return False
+        except discord.HTTPException as e:
+            logger.warning(
+                "[Interaction] defer failed with HTTPException "
+                f"status={getattr(e, 'status', 'unknown')} "
+                f"code={getattr(e, 'code', 'unknown')} err={e}"
+            )
+            return False
+
     def load_tracking_data(self):
         """โหลดข้อมูลการติดตามจากไฟล์"""
         try:
@@ -1241,7 +1263,8 @@ class FollowersCog(commands.Cog):
     @app_commands.command(name="โปรไฟล์กิจกรรมroblox", description="สรุปการออนไลน์และเวลาเล่น Roblox จากข้อมูลติดตาม")
     @app_commands.describe(user="ID/ชื่อ/ลิงก์ Roblox ที่ต้องการดู", auto_track="ถ้ายังไม่มีในฐานข้อมูล ให้เริ่มติดตามอัตโนมัติ")
     async def roblox_activity_profile(self, interaction: discord.Interaction, user: str, auto_track: bool = True):
-        await interaction.response.defer()
+        if not await self._safe_defer(interaction):
+            return
         existed_before = False
         async with aiohttp.ClientSession() as session:
             user_id = await self.resolve_user_input(session, user)
