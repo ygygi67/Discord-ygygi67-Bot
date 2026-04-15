@@ -102,6 +102,21 @@
   - เมื่อพิมพ์ `disable/enable` ไม่ครบ จะมีข้อความบอก usage และตัวอย่างคำสั่งต่อทันที
   - เพิ่ม log สถานะ Roblox Board ในคอนโซลระหว่างรีเฟรช/อัปเดตอัตโนมัติ
   - เพิ่ม log เริ่ม/จบ/error ของ Slash Commands ในคอนโซลเพื่อตรวจว่า “บอทยังคำนวณอยู่”
+- ✅ เพิ่มระบบ **AI Karaoke (Vocal Separation)** ในระบบเพลง:
+  - ใช้คำสั่ง `/เล่น` แล้วเลือก `mode: คาราโอเกะ` บอทจะใช้ AI ตัดเสียงร้องออกให้อัตโนมัติ
+  - ใช้โมเดลระดับสูง `UVR-MDX-NET-Voc_FT` เพื่อคุณภาพดนตรี (Instrumental) ที่ดีที่สุด
+  - มีข้อความแจ้งสถานะการประมวลผล (Preparing > AI Separation > Completed)
+- ✅ ปรับปรุงระบบ **Vocal Separator (`/แยกเสียงร้อง`)**:
+  - เพิ่ม **Progress Bar** และ Animation แสดงสถานะการถอดเสียงเพื่อให้ไม่ดูเหมือนบอทค้าง
+  - ตั้งชื่อไฟล์ผลลัพธ์ตามชื่อเพลงจริงโดยอัตโนมัติ (เช่น `ชื่อเพลง (Vocals).mp3`)
+  - แก้ไขบัค Interaction Timeout และรองรับลิงก์ Playlist (โดยโหลดเฉพาะคลิปที่เลือก)
+- ✅ ปรับปรุงระบบ **Roblox Followers**:
+  - เพิ่มระบบแจ้งเตือนแบบ **State Persistence** ป้องกันบอทแจ้งเตือนซ้ำซ้อนหลังจากการรีบูต
+  - เพิ่ม Cooldown แจ้งเตือน 45 วินาทีต่อคน เพื่อลดความวุ่นวายจาก API Flickering
+- ✅ ย้ายระบบ **Youtube Spy** เข้ามาเป็น Cog สมบูรณ์แบบ:
+  - รองรับการสแกนความเคลื่อนไหว (Subscriber/Views/New Video) ทุก 10 นาที
+  - ควบคุมผ่านคำสั่ง `/youtube-spy` (Scan / Status / Reset DB)
+  - จัดโครงสร้างข้อมูลใหม่ไปไว้ที่ `data/youtube_spy/`
 
 ---
 
@@ -145,6 +160,7 @@
 - `/เปลี่ยนชื่อห้อง_tempvoice`
 - `/ตั้งค่า_serverstats`
 - `/ตั้งชื่อ_serverstats`
+- `/youtube-spy`
 
 ---
 
@@ -324,7 +340,10 @@ ygygi67 Bot/
 │  │  ├─ stats.py
 │  │  ├─ status.py
 │  │  ├─ suggestion.py
-│  │  └─ utility.py
+│  │  ├─ utility.py
+│  │  └─ vocal_separator.py
+│  ├─ YoutubeLog/
+│  │  └─ youtube_super_bot.py
 │  └─ voice/
 │     └─ tts.py
 │

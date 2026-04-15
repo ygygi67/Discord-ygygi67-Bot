@@ -552,16 +552,11 @@ class TempVoiceServerStats(commands.Cog):
 
 
 async def setup(bot):
-    guild_id = os.getenv("DISCORD_GUILD_ID")
-    if guild_id and guild_id.strip().isdigit():
-        await bot.add_cog(TempVoiceServerStats(bot), guild=discord.Object(id=int(guild_id)))
-        return
-
-    if os.path.isdir("data"):
-        for name in os.listdir("data"):
-            m = re.match(r"^(\d{15,21})_", name)
-            if m:
-                await bot.add_cog(TempVoiceServerStats(bot), guild=discord.Object(id=int(m.group(1))))
-                return
+    use_guild_scope = os.getenv("USE_GUILD_SCOPED_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if use_guild_scope:
+        guild_id = os.getenv("DISCORD_GUILD_ID")
+        if guild_id and guild_id.strip().isdigit():
+            await bot.add_cog(TempVoiceServerStats(bot), guild=discord.Object(id=int(guild_id)))
+            return
 
     await bot.add_cog(TempVoiceServerStats(bot))

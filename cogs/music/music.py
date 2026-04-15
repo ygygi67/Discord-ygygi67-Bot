@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 import time
 import uuid
 import random
+import shutil
 from difflib import SequenceMatcher
+from pathlib import Path
 
 logger = logging.getLogger('music_cog')
 
@@ -195,6 +197,8 @@ class MusicTrack:
         self.webpage_url = webpage_url or url
         self.requester = requester
         self.source = source
+        self.is_karaoke = False
+        self.local_url = None
         self.created_at = datetime.now(timezone.utc)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -205,6 +209,8 @@ class MusicTrack:
             'thumbnail': self.thumbnail,
             'webpage_url': self.webpage_url,
             'source': self.source,
+            'is_karaoke': self.is_karaoke,
+            'local_url': self.local_url,
             'requester_id': self.requester.id if self.requester else None,
             'created_at': self.created_at.isoformat()
         }
@@ -219,6 +225,8 @@ class MusicTrack:
             webpage_url=data.get('webpage_url'),
             source=data.get('source', 'unknown')
         )
+        track.is_karaoke = data.get('is_karaoke', False)
+        track.local_url = data.get('local_url')
         if guild and data.get('requester_id'):
             track.requester = guild.get_member(data['requester_id'])
         return track
@@ -435,6 +443,8 @@ class Music(commands.Cog):
         
         # Reload protection
         self.reload_in_progress = False
+        self.karaoke_dir = "data/temp/karaoke"
+        os.makedirs(self.karaoke_dir, exist_ok=True)
 
         
     async def save_voice_state(self, guild_id: int, channel_id: Optional[int]):
@@ -623,9 +633,98 @@ class Music(commands.Cog):
         except Exception as e:
             logger.error(f"Search failed: {e}"); return None
 
+    async def _process_karaoke_track(self, guild_id: int, track: MusicTrack):
+        """ใช้ AI แยกเสียงร้องเพื่อสร้างไฟล์คาราโอเกะ (Instrumental)"""
+        if track.local_url and os.path.exists(track.local_url):
+            return
+            
+        queue = self.get_queue(guild_id)
+        msg = None
+        if queue.text_channel_id:
+            channel = self.bot.get_guild(guild_id).get_channel(queue.text_channel_id)
+            if channel:
+                msg = await channel.send(f"🎙️ **AI กำลังจัดเตรียมโหมดคาราโอเกะ...**\nเพลง: `{track.title}`\n(ขั้นตอนนี้ใช้เวลาประมาณ 1-2 นาที กรุณารอสักครู่)")
+
+        session_id = f"karaoke_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        work_path = os.path.join(self.karaoke_dir, session_id)
+        os.makedirs(work_path, exist_ok=True)
+        
+        try:
+            # 1. Download full audio
+            temp_dl = os.path.join(work_path, "input.mp3")
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': temp_dl,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            def download():
+                with YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([track.webpage_url])
+            
+            await self.bot.loop.run_in_executor(None, download)
+            
+            if not os.path.exists(temp_dl):
+                raise Exception("ดาวน์โหลดไฟล์เสียงไม่สำเร็จ")
+                
+            # 2. Separate
+            output_dir = os.path.join(work_path, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            cmd = [
+                "audio-separator",
+                temp_dl,
+                "--output_dir", output_dir,
+                "--model_filename", "UVR-MDX-NET-Voc_FT.onnx",
+                "--output_format", "MP3"
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.wait()
+            
+            # 3. Find instrumental
+            instrumental_file = None
+            for f in os.listdir(output_dir):
+                if "(Instrumental)" in f:
+                    instrumental_file = os.path.join(output_dir, f)
+                    break
+            
+            if instrumental_file:
+                # Move to permanent temp storage
+                final_path = os.path.join(self.karaoke_dir, f"{session_id}_inst.mp3")
+                shutil.move(instrumental_file, final_path)
+                track.local_url = final_path
+                if msg: await msg.edit(content=f"✅ **AI คาราโอเกะพร้อมแล้ว!** เริ่มเล่น Instrumental ของ: `{track.title}`")
+            else:
+                raise Exception("AI แยกเสียงดนตรีไม่สำเร็จ")
+                
+        except Exception as e:
+            logger.error(f"[Karaoke] Error processing {track.title}: {e}")
+            if msg: await msg.edit(content=f"❌ **ขออภัย:** ระบบไม่สามารถสร้างคาราโอเกะได้ ({str(e)}) บอทจะเล่นแบบปกติแทน...")
+        finally:
+            # Clean up work path
+            shutil.rmtree(work_path, ignore_errors=True)
+
     async def play_track(self, vc: discord.VoiceClient, track: MusicTrack, seek: float = 0):
         try:
             queue = self.get_queue(vc.guild.id)
+            
+            # 🎙️ Handle Karaoke Mode
+            if track.is_karaoke and not track.local_url:
+                await self._process_karaoke_track(vc.guild.id, track)
+            
+            # Use local URL if available
+            stream_url = track.local_url if (track.local_url and os.path.exists(track.local_url)) else track.url
             
             # Dynamic FFMPEG filters
             af_filters = []
@@ -653,7 +752,7 @@ class Music(commands.Cog):
                 'before_options': f'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 {seek_opt}'
             }
             
-            vc.play(discord.FFmpegPCMAudio(track.url, **opts), 
+            vc.play(discord.FFmpegPCMAudio(stream_url, **opts), 
                     after=lambda e: asyncio.run_coroutine_threadsafe(self.handle_track_end(vc.guild), self.bot.loop))
             queue.current_track = track
             queue.start_time = time.time() - seek
@@ -767,7 +866,12 @@ class Music(commands.Cog):
         queue.is_refreshing = False
 
     @app_commands.command(name="เล่น", description="เล่นเพลงจากชื่อหรือลิงก์")
-    async def play(self, interaction: discord.Interaction, query: str):
+    @app_commands.describe(query="ชื่อเพลงหรือลิงก์", mode="เลือกโหมดการเล่น (สำหรับคาราโอเกะระบบจะโหลดและแยกเสียงร้องให้อัตโนมัติ)")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="ปกติ (Normal)", value="normal"),
+        app_commands.Choice(name="คาราโอเกะ - ตัดเสียงร้อง (Karaoke)", value="karaoke")
+    ])
+    async def play(self, interaction: discord.Interaction, query: str, mode: str = "normal"):
         await interaction.response.defer()
         queue = self.get_queue(interaction.guild.id)
         queue.text_channel_id = interaction.channel_id
@@ -784,6 +888,7 @@ class Music(commands.Cog):
         track = await self.search_track(query)
         if not track: return await interaction.followup.send("❌ ไม่พบเพลง", ephemeral=True)
         track.requester = interaction.user
+        track.is_karaoke = (mode == "karaoke")
         
         queue = self.get_queue(interaction.guild.id)
         pos = queue.add(track)

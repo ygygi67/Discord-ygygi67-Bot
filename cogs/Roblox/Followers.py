@@ -394,6 +394,10 @@ class RobloxPresenceBoardView(discord.ui.View):
         await self.refresh_message()
 
 class FollowersCog(commands.Cog):
+    def cog_unload(self):
+        self.check_presence_task.cancel()
+        self.refresh_presence_boards_task.cancel()
+
     def __init__(self, bot):
         self.bot = bot
         self.default_target = "4401534231"
@@ -408,15 +412,13 @@ class FollowersCog(commands.Cog):
         self.presence_boards_file = 'data/roblox_presence_boards.json'
         self.activity_file = 'data/roblox_activity_history.json'
         self.tracked_users = self.load_tracking_data() # {roblox_id: [channel_id, ...]}
-        self.last_presence = {} # {roblox_id: last_presence_type}
-        self.game_started_at: Dict[str, float] = {}
-        self.game_total_seconds: Dict[str, float] = {}
-        self.last_online_ts: Dict[str, float] = {}
-        self.presence_cache = self.load_presence_cache()
         self.presence_boards = self.load_presence_boards()
         self.activity_data = self.load_activity_data()
+        self.last_presence = self.load_last_presence() # {roblox_id: last_presence_type}
+        self._last_notify_ts: Dict[str, float] = {}   # {roblox_id: last_notify_ts}
         self.activity_dirty = False
         self.last_friend_fetch_note = ""
+        self._ephemeral_presence_cache: Dict[int, Tuple[float, dict]] = {} # {id: (ts, data)}
         
         # เริ่ม Task ตรวจสอบสถานะ
         self.check_presence_task.start()
@@ -454,14 +456,41 @@ class FollowersCog(commands.Cog):
             print(f"Error loading tracking data: {e}")
         return {}
 
-    def save_tracking_data(self):
-        """บันทึกข้อมูลการติดตามลงไฟล์"""
+    async def save_tracking_data(self):
+        """บันทึกข้อมูลการติดตามลงไฟล์ (Non-blocking)"""
+        def _sync_save():
+            try:
+                os.makedirs(os.path.dirname(self.tracking_file), exist_ok=True)
+                with open(self.tracking_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.tracked_users, f, ensure_ascii=False, indent=4)
+                return True
+            except Exception as e:
+                print(f"Error saving tracking data: {e}")
+                return False
+        await self.bot.loop.run_in_executor(None, _sync_save)
+
+    def load_last_presence(self) -> Dict[str, int]:
+        """โหลดสถานะล่าสุดที่บันทึกไว้ เพื่อป้องกันการแจ้งเตือนซ้ำหลังรีบูต"""
+        path = 'data/roblox_last_presence.json'
         try:
-            os.makedirs(os.path.dirname(self.tracking_file), exist_ok=True)
-            with open(self.tracking_file, 'w', encoding='utf-8') as f:
-                json.dump(self.tracked_users, f, ensure_ascii=False, indent=4)
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
         except Exception as e:
-            print(f"Error saving tracking data: {e}")
+            logger.debug(f"Error loading last presence: {e}")
+        return {}
+
+    async def save_last_presence(self):
+        """บันทึกสถานะล่าสุดลงไฟล์"""
+        path = 'data/roblox_last_presence.json'
+        def _sync_save():
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(self.last_presence, f, ensure_ascii=False, indent=4)
+            except Exception as e:
+                logger.error(f"Error saving last presence: {e}")
+        await self.bot.loop.run_in_executor(None, _sync_save)
 
     def load_presence_cache(self) -> Dict[str, dict]:
         try:
@@ -474,13 +503,18 @@ class FollowersCog(commands.Cog):
             logger.warning(f"[RobloxBoard] failed to load presence cache: {e}")
         return {}
 
-    def save_presence_cache(self):
-        try:
-            os.makedirs(os.path.dirname(self.presence_cache_file), exist_ok=True)
-            with open(self.presence_cache_file, 'w', encoding='utf-8') as f:
-                json.dump(self.presence_cache, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning(f"[RobloxBoard] failed to save presence cache: {e}")
+    async def save_presence_cache(self):
+        """บันทึกแคชสถานะลงไฟล์ (Non-blocking)"""
+        def _sync_save():
+            try:
+                os.makedirs(os.path.dirname(self.presence_cache_file), exist_ok=True)
+                with open(self.presence_cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.presence_cache, f, ensure_ascii=False, indent=2)
+                return True
+            except Exception as e:
+                logger.warning(f"[RobloxBoard] failed to save presence cache: {e}")
+                return False
+        await self.bot.loop.run_in_executor(None, _sync_save)
 
     def load_presence_boards(self) -> Dict[str, dict]:
         try:
@@ -493,13 +527,18 @@ class FollowersCog(commands.Cog):
             logger.warning(f"[RobloxBoard] failed to load board config: {e}")
         return {}
 
-    def save_presence_boards(self):
-        try:
-            os.makedirs(os.path.dirname(self.presence_boards_file), exist_ok=True)
-            with open(self.presence_boards_file, 'w', encoding='utf-8') as f:
-                json.dump(self.presence_boards, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning(f"[RobloxBoard] failed to save board config: {e}")
+    async def save_presence_boards(self):
+        """บันทึกค่ากระดานลงไฟล์ (Non-blocking)"""
+        def _sync_save():
+            try:
+                os.makedirs(os.path.dirname(self.presence_boards_file), exist_ok=True)
+                with open(self.presence_boards_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.presence_boards, f, ensure_ascii=False, indent=2)
+                return True
+            except Exception as e:
+                logger.warning(f"[RobloxBoard] failed to save board config: {e}")
+                return False
+        await self.bot.loop.run_in_executor(None, _sync_save)
 
     def load_activity_data(self) -> Dict[str, dict]:
         try:
@@ -512,16 +551,23 @@ class FollowersCog(commands.Cog):
             logger.warning(f"[RobloxActivity] failed to load activity data: {e}")
         return {}
 
-    def save_activity_data(self):
+    async def save_activity_data(self):
+        """บันทึกประวัติกิจกรรมลงไฟล์ (Non-blocking)"""
         if not self.activity_dirty:
             return
-        try:
-            os.makedirs(os.path.dirname(self.activity_file), exist_ok=True)
-            with open(self.activity_file, 'w', encoding='utf-8') as f:
-                json.dump(self.activity_data, f, ensure_ascii=False, indent=2)
+        def _sync_save():
+            try:
+                os.makedirs(os.path.dirname(self.activity_file), exist_ok=True)
+                with open(self.activity_file, 'w', encoding='utf-8') as f:
+                    # ปิด indent สำหรับไฟล์ประวัติเพื่อลดขนาดไฟล์และประหยัด CPU/IO
+                    json.dump(self.activity_data, f, ensure_ascii=False)
+                return True
+            except Exception as e:
+                logger.warning(f"[RobloxActivity] failed to save activity data: {e}")
+                return False
+        success = await self.bot.loop.run_in_executor(None, _sync_save)
+        if success:
             self.activity_dirty = False
-        except Exception as e:
-            logger.warning(f"[RobloxActivity] failed to save activity data: {e}")
 
     def _record_activity_sample(
         self,
@@ -984,10 +1030,26 @@ class FollowersCog(commands.Cog):
         if not user_ids:
             return result
 
+        now = datetime.now(timezone.utc).timestamp()
+        
+        # ตรองเอาเฉพาะ ID ที่ไม่มีในแคชช่วง 30 วินาทีล่าสุด
+        ids_to_fetch = [uid for uid in user_ids if uid not in self._ephemeral_presence_cache or now - self._ephemeral_presence_cache[uid][0] > 30]
+        
+        # ดึงจากแคชก่อน
+        for uid in user_ids:
+            if uid in self._ephemeral_presence_cache and now - self._ephemeral_presence_cache[uid][0] <= 30:
+                result[str(uid)] = self._ephemeral_presence_cache[uid][1]
+
+        if not ids_to_fetch:
+            return result
+
         # Roblox presence endpoint sometimes returns 400/429 on bigger chunks
-        chunk_size = 100
-        for i in range(0, len(user_ids), chunk_size):
-            chunk = user_ids[i:i + chunk_size]
+        # Smaller chunk size and pause between chunks to be gentler on Roblox API
+        chunk_size = 50
+        for i in range(0, len(ids_to_fetch), chunk_size):
+            if i > 0:
+                await asyncio.sleep(0.5)
+            chunk = ids_to_fetch[i:i + chunk_size]
             success = False
             for attempt in range(2):
                 try:
@@ -995,12 +1057,14 @@ class FollowersCog(commands.Cog):
                         if r.status == 200:
                             payload = await r.json()
                             for p in payload.get("userPresences", []):
-                                uid = str(p.get("userId"))
-                                result[uid] = p
+                                uid_int = int(p.get("userId"))
+                                uid_str = str(uid_int)
+                                result[uid_str] = p
+                                self._ephemeral_presence_cache[uid_int] = (now, p)
                             success = True
                             break
                         if r.status == 429:
-                            await asyncio.sleep(0.8 * (attempt + 1))
+                            await asyncio.sleep(1.0 * (attempt + 1))
                             continue
                         if r.status == 400 and len(chunk) > 25:
                             # fallback split half
@@ -1011,12 +1075,14 @@ class FollowersCog(commands.Cog):
                             result.update(right)
                             success = True
                             break
-                        logger.warning(f"[RobloxBoard] presence lookup failed: HTTP {r.status} (chunk={len(chunk)})")
+                        # ลดการ log error ที่ซ้ำซ้อน
+                        if r.status != 429:
+                            logger.info(f"[RobloxBoard] presence lookup status {r.status} for chunk of {len(chunk)}")
                         break
                 except Exception as e:
                     if attempt == 1:
-                        logger.warning(f"[RobloxBoard] presence lookup error: {e}")
-                    await asyncio.sleep(0.3 * (attempt + 1))
+                        logger.debug(f"[RobloxBoard] presence lookup error: {e}")
+                    await asyncio.sleep(0.5 * (attempt + 1))
             if not success:
                 continue
         return result
@@ -1118,8 +1184,8 @@ class FollowersCog(commands.Cog):
                     "last_online_ts": last_ts,
                     "game_duration_sec": game_sec,
                 })
-        self.save_presence_cache()
-        self.save_activity_data()
+        await self.save_presence_cache()
+        await self.save_activity_data()
         return rows
 
     async def build_presence_board_embed(
@@ -1287,7 +1353,7 @@ class FollowersCog(commands.Cog):
             username=str(basic_user.get("name") or ""),
             last_online_ts=last_online_ts
         )
-        self.save_activity_data()
+        await self.save_activity_data()
 
         stats = self._compute_activity_stats(str(user_id))
         auto_track_note = ""
@@ -1297,7 +1363,7 @@ class FollowersCog(commands.Cog):
             channels = self.tracked_users.setdefault(rid_str, [])
             if cid_str not in channels:
                 channels.append(cid_str)
-                self.save_tracking_data()
+                await self.save_tracking_data()
             auto_track_note = "ยังไม่มีข้อมูลเดิมในระบบ ระบบเริ่มติดตามและเก็บข้อมูลให้อัตโนมัติแล้ว ✅"
 
         totals = stats.get("totals", {})
@@ -1353,7 +1419,7 @@ class FollowersCog(commands.Cog):
 
     # --- ระบบติดตามสถานะ ---
 
-    @tasks.loop(seconds=45) # ตรวจสอบทุก 45 วินาที
+    @tasks.loop(seconds=60) # ตรวจสอบทุก 60 วินาที เพื่อเลี่ยงการโดนแบนจาก Roblox API
     async def check_presence_task(self):
         if not self.tracked_users:
             return
@@ -1367,7 +1433,7 @@ class FollowersCog(commands.Cog):
 
                 presence_map = await self.get_presence_batch(session, ids)
                 if not presence_map:
-                    logger.warning("[PresenceTask] empty presence response (possibly rate-limited)")
+                    # ปิด log นี้เพื่อลดความรก (เนื่องจาก get_presence_batch มีแคชและ retry ในตัวอยู่แล้ว)
                     return
 
                 for rid_int in ids:
@@ -1383,14 +1449,23 @@ class FollowersCog(commands.Cog):
                         last_online_ts=last_online_ts
                     )
 
-                    # ตรวจสอบว่ามีข้อมูลการเปลี่ยนแปลงไหม
-                    if rid in self.last_presence and self.last_presence[rid] != ptype:
-                        await self.notify_presence_change(rid, ptype, location)
+                    # ตรวจสอบว่ามีการเปลี่ยนแปลงสถานะจริงหรือไม่ (เทียบกับสถานะล่าสุดที่บันทึกไว้)
+                    old_ptype = self.last_presence.get(rid)
 
+                    # ถ้า ptype เปลี่ยนแปลง
+                    if old_ptype is not None and old_ptype != ptype:
+                        # ป้องกันการส่งซ้ำถี่เกินไป (Cooldown 45 วินาทีต่อคน)
+                        now = time.time()
+                        last_notified = self._last_notify_ts.get(rid, 0)
+                        if now - last_notified > 45:
+                            await self.notify_presence_change(rid, ptype, location)
+                            self._last_notify_ts[rid] = now
+                    
                     # อัปเดตสถานะล่าสุด
                     self.last_presence[rid] = ptype
 
-                self.save_activity_data()
+                await self.save_last_presence()
+                await self.save_activity_data()
         except aiohttp.ClientConnectionError:
             # มักเกิดตอนกำลัง restart/shutdown connector
             logger.info("[PresenceTask] connector closed during restart/shutdown")
@@ -1400,7 +1475,7 @@ class FollowersCog(commands.Cog):
         except Exception as e:
             logger.warning(f"[PresenceTask] error: {e}")
 
-    @tasks.loop(seconds=45)
+    @tasks.loop(seconds=60)
     async def refresh_presence_boards_task(self):
         if not self.presence_boards:
             return
@@ -1478,7 +1553,7 @@ class FollowersCog(commands.Cog):
             self.presence_boards.pop(key, None)
             changed = True
         if changed:
-            self.save_presence_boards()
+            await self.save_presence_boards()
 
     async def notify_presence_change(self, roblox_id, p_type, location):
         """แจ้งเตือนการเปลี่ยนแปลงไปยังทุก Channel ที่เลือกไว้"""
@@ -1510,14 +1585,23 @@ class FollowersCog(commands.Cog):
             
             embed.set_footer(text=f"Roblox ID: {roblox_id}")
 
-            # ส่งไปยังทุกช่องที่ลงทะเบียนไว้
-            for cid_str in channels_ids:
+            # ส่งไปยังทุกช่องที่ลงทะเบียนไว้ (ใช้ set เพื่อป้องกัน ID ซ้ำ)
+            unique_channel_ids = set()
+            for cid in channels_ids:
+                if cid: unique_channel_ids.add(int(cid))
+
+            for cid_int in unique_channel_ids:
                 try:
-                    channel = self.bot.get_channel(int(cid_str))
+                    channel = self.bot.get_channel(cid_int)
+                    if not channel:
+                        channel = await self.bot.fetch_channel(cid_int)
+                    
                     if channel:
                         await channel.send(embed=embed)
-                except:
-                    pass
+                        # หน่วงเวลาเล็กน้อยเพื่อป้องกัน Discord rate limit
+                        await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.debug(f"[PresenceTask] failed to send to {cid_int}: {e}")
 
     @app_commands.command(name="ติดตามสถานะroblox", description="ลงทะเบียนติดตามสถานะของผู้ใช้ Roblox (บอทจะแจ้งในห้องนี้เมื่อเขาเปลี่ยนสถานะ)")
     @app_commands.describe(user_id="ID หรือชื่อผู้ใช้ Roblox ที่ต้องการติดตาม")
@@ -1543,7 +1627,7 @@ class FollowersCog(commands.Cog):
             
         if cid_str not in self.tracked_users[rid_str]:
             self.tracked_users[rid_str].append(cid_str)
-            self.save_tracking_data()
+            await self.save_tracking_data()
             await interaction.followup.send(f"✅ **เริ่มการติดตามสำเร็จ!** บอทจะแจ้งเตือนเมื่อ User ID: `{rid_str}` มีการเปลี่ยนแปลงสถานะมายังช่องนี้")
         else:
             await interaction.followup.send(f"ℹ️ คุณลงทะเบียนติดตาม User ID: `{rid_str}` ในช่องนี้ไว้แล้ว")
@@ -1568,7 +1652,7 @@ class FollowersCog(commands.Cog):
             self.tracked_users[rid_str].remove(cid_str)
             if not self.tracked_users[rid_str]:
                 del self.tracked_users[rid_str]
-            self.save_tracking_data()
+            await self.save_tracking_data()
             await interaction.response.send_message(f"✅ ยกเลิกการติดตาม User ID: `{rid_str}` สำหรับช่องนี้เรียบร้อยแล้ว")
         else:
             await interaction.response.send_message(f"❌ คุณไม่ได้ลงทะเบียนติดตาม User ID: `{rid_str}` ไว้ในช่องนี้", ephemeral=True)

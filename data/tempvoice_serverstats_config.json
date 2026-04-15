@@ -1,0 +1,24 @@
+{
+  "tempvoice": {
+    "1171254331643789332": {
+      "category_id": 1416061142152908803,
+      "lobby_channel_id": 1489298663175094352,
+      "room_template": "🔊 {display} #{num}",
+      "room_counter": 12
+    },
+    "1485283615343509648": {
+      "category_id": 1491102171641417799,
+      "lobby_channel_id": 1491102173935964344,
+      "room_template": "🔊 {display} #{num}",
+      "room_counter": 4
+    }
+  },
+  "serverstats": {
+    "1171254331643789332": {
+      "humans_channel_id": 1489297879922118676,
+      "bots_channel_id": 1489297882719846480,
+      "humans_template": "👥 ผู้ใช้: {count}",
+      "bots_template": "🤖 บอท: {count}"
+    }
+  }
+}

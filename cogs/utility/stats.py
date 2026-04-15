@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import json
 import os
+import shutil
 from datetime import datetime
 import logging
 from collections import defaultdict
@@ -16,8 +17,30 @@ TOP_N = 10
 
 def load_stats():
     if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"stats.json corrupted (JSONDecodeError): {e}")
+            # พยายามกู้ object ตัวแรกจากไฟล์ที่มีข้อมูลซ้อนกัน
+            try:
+                with open(STATS_FILE, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                decoder = json.JSONDecoder()
+                obj, _ = decoder.raw_decode(raw.lstrip())
+                backup_path = STATS_FILE + ".corrupt.bak"
+                shutil.copy2(STATS_FILE, backup_path)
+                logger.warning(f"Backed up corrupt stats file to: {backup_path}")
+                return obj if isinstance(obj, dict) else {"messages": {}, "voice": {}, "names": {}, "servers": {}}
+            except Exception as recover_err:
+                logger.error(f"Failed to recover stats.json: {recover_err}")
+                backup_path = STATS_FILE + ".unreadable.bak"
+                try:
+                    shutil.copy2(STATS_FILE, backup_path)
+                    logger.warning(f"Backed up unreadable stats file to: {backup_path}")
+                except Exception:
+                    pass
+                return {"messages": {}, "voice": {}, "names": {}, "servers": {}}
     return {"messages": {}, "voice": {}, "names": {}, "servers": {}}
 
 def save_stats(stats):

@@ -443,8 +443,10 @@ def get_fast_ydl_opts(download_folder, audio_only, ffmpeg_path=None):
         })
     else:
         common_opts.update({
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best',
+            # Prefer H.264 (avc1) and standard AAC (mp4a) for maximum compatibility with video editors like Resolve
+            'format': 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
             'merge_output_format': 'mp4',
+            'postprocessor_args': ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k'],
             'writesubtitles': False,
             'writeautomaticsub': False,
             'prefer_ffmpeg': True,
@@ -478,7 +480,18 @@ def download_worker(q, download_folder, cookies_opts=None):
                 args += ['-ss', opts['start']]
             if opts.get('end'):
                 args += ['-to', opts['end']]
-            ydl_opts['postprocessor_args'] = args
+            
+            # Merge with existing postprocessor_args to avoid losing the codec fixes
+            if 'postprocessor_args' in ydl_opts:
+                existing = ydl_opts['postprocessor_args']
+                if isinstance(existing, list):
+                    ydl_opts['postprocessor_args'] = existing + args
+                elif isinstance(existing, dict):
+                    # For dict, we add to a general 'ffmpeg' key or just convert to list
+                    # But per yt-dlp docs, we can just use a list for simplicity here
+                    ydl_opts['postprocessor_args'] = list(existing.get('ffmpeg', [])) + args
+            else:
+                ydl_opts['postprocessor_args'] = args
         # เพิ่ม cookies option ถ้ามี
         if cookies_opts:
             ydl_opts.update(cookies_opts)

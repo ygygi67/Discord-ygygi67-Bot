@@ -58,7 +58,7 @@ class Utility(commands.Cog):
         self.current_frame = 0
         self.bot_admin_id = 1034845842709958786
         self.main_only_mode = os.getenv("UTILITY_MAIN_ONLY", "1").strip().lower() in {"1", "true", "yes", "on"}
-        default_core = ["คำสั่ง", "โหลดคลิป", "เสียง", "ระบบ", "ติดตาม", "สถิติ", "เชิญบอทเต็ม"]
+        default_core = ["คำสั่ง", "โหลดคลิป", "ลบรีแอก", "ล้างรีแอก", "เสียง", "ระบบ", "ติดตาม", "สถิติ", "เชิญบอทเต็ม"]
         raw_core = os.getenv("UTILITY_CORE_COMMANDS", ",".join(default_core)).strip()
         self.core_commands = {x.strip() for x in re.split(r"[,\s;|]+", raw_core) if x.strip()}
         logging.info("Utility cog initialized")
@@ -1803,8 +1803,16 @@ class Utility(commands.Cog):
             logger.warning(f"Catbox upload error: {e}")
         return None
 
-    async def _download_clip_core(self, interaction: discord.Interaction, url: str, mode: str = "mp4", defer_response: bool = True):
+    async def _download_clip_core(self, interaction: discord.Interaction, url: str, mode: str = "mp4", 
+                                  transcript: bool = False, lang: str = "th", defer_response: bool = True):
         """ดาวน์โหลดวิดีโอหรือเสียงจากลิงก์ต่างๆ (internal core)"""
+        # เตรียมรายชื่อภาษา (รองรับหลายภาษาคั่นด้วยคอมม่า)
+        langs_list = [x.strip() for x in re.split(r'[,\s/]+', (lang or "th")) if x.strip()]
+        if not langs_list:
+            langs_list = ["th"]
+        lang_regex = "|".join(langs_list)
+        lang_main = langs_list[0]
+
         if defer_response:
             await interaction.response.defer(ephemeral=False)
 
@@ -2105,8 +2113,10 @@ class Utility(commands.Cog):
             }
             
             if audio_only:
+                # พยายามเลือกภาษาที่ผู้ใช้ระบุสำหรับแทร็กเสียง (รองรับหลายภาษาด้วย regex)
+                audio_format = f'bestaudio[language~="(?i)({lang_regex})"][acodec!=none]/bestaudio[acodec!=none]/bestaudio/best'
                 ydl_opts.update({
-                    'format': 'bestaudio[acodec!=none]/bestaudio/best',
+                    'format': audio_format,
                     'extractor_args': {
                         'youtube': {
                             'player_client': ['android', 'web', 'ios']
@@ -2119,9 +2129,10 @@ class Utility(commands.Cog):
                     }],
                 })
             else:
+                # พยายามเลือกภาษาที่ผู้ใช้ระบุสำหรับทั้งวิดีโอและเสียง
+                video_format = f'bv*[vcodec!=none]+ba[language~="(?i)({lang_regex})"][acodec!=none]/bv*[vcodec!=none]+ba[acodec!=none]/b[ext=mp4]/b'
                 ydl_opts.update({
-                    # ไม่ lock เฉพาะ m4a เพื่อรองรับแทร็กเสียงหลายภาษา/หลาย codec ได้ดีขึ้น
-                    'format': 'bv*[vcodec!=none]+ba[acodec!=none]/b[ext=mp4]/b',
+                    'format': video_format,
                     'merge_output_format': 'mp4',
                     'extractor_args': {
                         'youtube': {
@@ -2129,6 +2140,18 @@ class Utility(commands.Cog):
                         }
                     },
                 })
+
+            if transcript:
+                sub_patterns = [f'{l}.*' for l in langs_list]
+                ydl_opts.update({
+                    'writesubtitles': True,
+                    'writeautomaticsub': True,
+                    'subtitleslangs': sub_patterns + ['en.*', 'all'],
+                })
+                # เพิ่มตัวแปลงซับไตเติ้ลเป็น srt เพื่อความสะดวกในการใช้งาน
+                pp = ydl_opts.get('postprocessors', [])
+                pp.append({'key': 'FFmpegSubtitlesConvertor', 'format': 'srt'})
+                ydl_opts['postprocessors'] = pp
 
             # รัน yt-dlp ใน thread แยกเพื่อไม่ให้บล็อกบอท
             def run_ytdl():
@@ -2144,6 +2167,14 @@ class Utility(commands.Cog):
                 updater_task = asyncio.create_task(progress_updater())
                 await _queue_progress(f"⏳ กำลังเริ่มดาวน์โหลดโหมด {mode_label} ...")
                 filename, info = await loop.run_in_executor(None, run_ytdl)
+                
+                # ตรวจหาไฟล์ซับไตเติ้ลที่โหลดมาได้
+                subtitle_files = []
+                if transcript:
+                    for f in os.listdir(temp_dir):
+                        if f.endswith('.srt') or f.endswith('.vtt'):
+                            subtitle_files.append(os.path.join(temp_dir, f))
+                
                 progress_done.set()
                 await updater_task
             except Exception as e:
@@ -2202,7 +2233,7 @@ class Utility(commands.Cog):
                 shutil.move(src_filename, final_path)
                 return final_path
 
-            async def _send_or_upload_clip(src_filename):
+            async def _send_or_upload_clip(src_filename, subs=[]):
                 """ลองส่งใน Discord ถ้าใหญ่เกิน/ล้มเหลว → อัพ catbox → fallback local"""
                 nonlocal filename
                 base_name = os.path.basename(src_filename)
@@ -2233,12 +2264,22 @@ class Utility(commands.Cog):
                     )
                     link = await self._upload_to_catbox(src_filename, base_name)
                     if link:
-                        await interaction.edit_original_response(content=
+                        msg_content = (
                             f"✅ **ดาวน์โหลดสำเร็จ!**\n"
                             f"🎬 หัวข้อ: `{title}`\n"
                             f"📦 ขนาด: `{file_size / (1024*1024):.2f} MB`\n"
                             f"🔗 ดาวน์โหลด: {link}"
                         )
+                        # ส่งซับไตเติ้ลแยกถ้ามี
+                        sub_discord_files = []
+                        for s in subs:
+                            if os.path.exists(s):
+                                sub_discord_files.append(discord.File(s))
+                        
+                        if sub_discord_files:
+                            await interaction.followup.send(content=msg_content, files=sub_discord_files)
+                        else:
+                            await interaction.edit_original_response(content=msg_content)
                     else:
                         final_path = _save_locally_clip(src_filename)
                         await interaction.edit_original_response(content=
@@ -2253,9 +2294,14 @@ class Utility(commands.Cog):
                         content=f"✅ **ดาวน์โหลดสำเร็จ:** `{title}`\n📦 ขนาด: `{file_size / (1024*1024):.2f} MB` กำลังอัพโหลด..."
                     )
                     try:
-                        await interaction.followup.send(file=discord.File(src_filename))
+                        discord_files = [discord.File(src_filename)]
+                        for s in subs:
+                            if os.path.exists(s):
+                                discord_files.append(discord.File(s))
+                        
+                        await interaction.followup.send(files=discord_files)
                         try:
-                            await interaction.edit_original_response(content=f"✅ **ดาวน์โหลดสำเร็จ:** `{title}` (ส่งไฟล์แล้ว)")
+                            await interaction.edit_original_response(content=f"✅ **ดาวน์โหลดสำเร็จ:** `{title}` (ส่งไฟล์แลัว)")
                         except: pass
                     except discord.HTTPException as upload_err:
                         # Discord ปฏิเสธ → catbox
@@ -2263,12 +2309,22 @@ class Utility(commands.Cog):
                         await interaction.edit_original_response(content="☁️ Discord ปฏิเสธไฟล์ กำลังอัพโหลดขึ้น catbox.moe...")
                         link = await self._upload_to_catbox(src_filename, base_name)
                         if link:
-                            await interaction.edit_original_response(content=
+                            msg_content = (
                                 f"✅ **ดาวน์โหลดสำเร็จ!**\n"
                                 f"🎬 หัวข้อ: `{title}`\n"
                                 f"📦 ขนาด: `{file_size / (1024*1024):.2f} MB`\n"
                                 f"🔗 ดาวน์โหลด: {link}"
                             )
+                            # ส่งคำบรรยายแยกถ้ามี
+                            sub_discord_files = []
+                            for s in subs:
+                                if os.path.exists(s):
+                                    sub_discord_files.append(discord.File(s))
+                            
+                            if sub_discord_files:
+                                await interaction.followup.send(content=msg_content, files=sub_discord_files)
+                            else:
+                                await interaction.edit_original_response(content=msg_content)
                         else:
                             final_path = _save_locally_clip(src_filename)
                             await interaction.edit_original_response(content=
@@ -2278,7 +2334,9 @@ class Utility(commands.Cog):
                                 f"📂 บันทึกไว้ที่เครื่องบอท: `{final_path}`"
                             )
 
-            await _send_or_upload_clip(filename)
+            await _send_or_upload_clip(filename, subs=subtitle_files)
+
+
 
         except Exception as e:
             logger.error(f"Error in download_clip: {e}\n{traceback.format_exc()}")
@@ -2289,14 +2347,130 @@ class Utility(commands.Cog):
                 shutil.rmtree(temp_dir)
 
     @app_commands.command(name="โหลดคลิป", description="ดาวน์โหลดคลิปจาก URL (YouTube, TikTok, Facebook, ฯลฯ)")
-    @app_commands.describe(url="ลิงก์คลิปที่ต้องการโหลด", mode="รูปแบบไฟล์ (MP4 หรือ MP3)")
+    @app_commands.describe(
+        url="ลิงก์คลิปที่ต้องการโหลด", 
+        mode="รูปแบบไฟล์ (MP4 หรือ MP3)",
+        transcript="ดึง Transcript/คำบรรยายออกมาเป็นไฟล์ด้วยหรือไม่",
+        lang="ตัวย่อภาษาที่ต้องการ (เช่น th, en, ja) หรือระบุหลายภาษาด้วยคอมม่า (th,en)"
+    )
     @app_commands.choices(mode=[
         app_commands.Choice(name="วิดีโอ (MP4)", value="mp4"),
         app_commands.Choice(name="เสียง (MP3)", value="mp3")
     ])
-    async def download_clip(self, interaction: discord.Interaction, url: str, mode: str = "mp4"):
+    async def download_clip(self, interaction: discord.Interaction, url: str, mode: str = "mp4", 
+                            transcript: bool = False, lang: str = "th"):
         """ดาวน์โหลดวิดีโอหรือเสียงจากลิงก์ต่างๆ"""
-        await self._download_clip_core(interaction, url, mode, defer_response=True)
+        await self._download_clip_core(interaction, url, mode, transcript=transcript, lang=lang, defer_response=True)
+
+    @app_commands.command(name="ลบรีแอก", description="ลบอิโมจิ (Reactions) ออกจากข้อความ")
+    @app_commands.describe(
+        message_id="ID ของข้อความที่ต้องการลบรีแอก",
+        emoji="ระบุอิโมจิที่ต้องการลบ (หากเว้นไว้จะลบทั้งหมด)",
+        member="ระบุสมาชิกที่ต้องการลบรีแอก (เฉพาะคนนี้)",
+        channel="ระบุห้องที่ข้อความอยู่ (หากเว้นไว้จะใช้ห้องปัจจุบัน)"
+    )
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def clear_reactions(self, interaction: discord.Interaction, message_id: str, 
+                              channel: discord.abc.GuildChannel = None, emoji: str = None, 
+                              member: discord.Member = None):
+        """ลบ Reactions ออกจากข้อความ"""
+        await interaction.response.defer(ephemeral=True)
+        
+        # ปรับประเภทของ channel ให้กว้างขึ้นเพื่อรองรับ TextChannel/Thread/ฯลฯ
+        target_channel = channel or interaction.channel
+        
+        if not hasattr(target_channel, "fetch_message"):
+            return await interaction.followup.send("❌ ช่องส่งข้อความนี้ไม่รองรับการดึงข้อความ")
+
+        try:
+            msg = await target_channel.fetch_message(int(message_id))
+        except ValueError:
+            return await interaction.followup.send("❌ กรุณาใส่ ID ข้อความให้ถูกต้อง (ต้องเป็นตัวเลข)")
+        except discord.NotFound:
+            return await interaction.followup.send("❌ ไม่พบข้อความตาม ID ที่ระบุในช่องนี้")
+        except discord.Forbidden:
+            return await interaction.followup.send("❌ บอทไม่มีสิทธิ์เข้าถึงข้อความในห้องนี้")
+        except Exception as e:
+            return await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
+
+        try:
+            if member and emoji:
+                # ลบรีแอกเฉพาะคนและเฉพาะอิโมจิ
+                await msg.remove_reaction(emoji, member)
+                await interaction.followup.send(f"✅ ลบรีแอก {emoji} ของ {member.display_name} เรียบร้อยแล้ว")
+            elif emoji:
+                # ลบอิโมจินี้จากทุกคน
+                await msg.clear_reaction(emoji)
+                await interaction.followup.send(f"✅ ลบรีแอก {emoji} จากทุกคนเรียบร้อยแล้ว")
+            elif member:
+                # ลบรีแอกทุกอันของคนนี้
+                removed_count = 0
+                for reaction in msg.reactions:
+                    try:
+                        await msg.remove_reaction(reaction.emoji, member)
+                        removed_count += 1
+                    except:
+                        pass
+                await interaction.followup.send(f"✅ ลบรีแอกทั้งหมดของ {member.display_name} เรียบร้อยแล้ว ({removed_count} อิโมจิ)")
+            else:
+                # ลบทั้งหมด
+                await msg.clear_reactions()
+                await interaction.followup.send("✅ ลบรีแอกทั้งหมดออกจากข้อความเรียบร้อยแล้ว")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ บอทไม่มีสิทธิ์ในการจัดการข้อความ (Manage Messages)")
+        except Exception as e:
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดขณะลบ: {e}")
+
+    @app_commands.command(name="ล้างรีแอก", description="ล้าง Reactions ออกจากข้อความจำนวนมาก (คล้ายการลบข้อความ)")
+    @app_commands.describe(
+        amount="จำนวนข้อความที่ต้องการตรวจสอบและล้างรีแอก (1-100)",
+        emoji="ระบุอิโมจิที่ต้องการลบ (หากเว้นไว้จะลบทั้งหมด)",
+        member="ระบุสมาชิกที่ต้องการลบรีแอก (เฉพาะคนนี้)"
+    )
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def purge_reactions(self, interaction: discord.Interaction, amount: int, 
+                               emoji: str = None, member: discord.Member = None):
+        """ล้าง Reactions ออกจากข้อความจำนวนมาก"""
+        if amount < 1 or amount > 100:
+            return await interaction.response.send_message("❌ จำนวนข้อความต้องอยู่ระหว่าง 1 ถึง 100", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        
+        count = 0
+        try:
+            async for message in interaction.channel.history(limit=amount):
+                try:
+                    # ถ้าไม่มีรีแอกเลยให้ข้าม
+                    if not message.reactions:
+                        continue
+                    
+                    if member and emoji:
+                        # ลบรีแอกเฉพาะคนและเฉพาะอิโมจิ
+                        await message.remove_reaction(emoji, member)
+                        count += 1
+                    elif emoji:
+                        # ลบอิโมจินี้จากทุกคนในข้อความนั้น
+                        await message.clear_reaction(emoji)
+                        count += 1
+                    elif member:
+                        # ลบรีแอกทุกอันของคนนี้ในข้อความนั้น
+                        reacted = False
+                        for r in message.reactions:
+                            try:
+                                await message.remove_reaction(r.emoji, member)
+                                reacted = True
+                            except: pass
+                        if reacted: count += 1
+                    else:
+                        # ลบทั้งหมดในข้อความนั้น
+                        await message.clear_reactions()
+                        count += 1
+                except:
+                    continue
+            
+            await interaction.followup.send(f"✅ ล้าง Reactions ออกจากข้อความไปทั้งหมด {count} ข้อความเรียบร้อยแล้ว (ตรวจสอบจาก {amount} ข้อความล่าสุด)")
+        except Exception as e:
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {e}")
 
 
 class MemberHelpView(discord.ui.View):

@@ -15,6 +15,10 @@ from typing import Optional
 logger = logging.getLogger('discord_bot')
 
 def _resolve_primary_guild_id() -> Optional[int]:
+    use_guild_scope = os.getenv("USE_GUILD_SCOPED_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if not use_guild_scope:
+        return None
+
     env_gid = os.getenv("DISCORD_GUILD_ID")
     if env_gid and env_gid.strip().isdigit():
         return int(env_gid)
