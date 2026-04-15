@@ -71,6 +71,22 @@ class SharedQueue:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_priority ON tasks(priority)')
             conn.commit()
     
+    def reset_interrupted_tasks(self):
+        """คืนค่า Task ที่ค้างอยู่ในสถานะ processing ให้กลับเป็น pending (ใช้ตอนบอทเริ่มใหม่)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    UPDATE tasks 
+                    SET status = 'pending', updated_at = ?
+                    WHERE status = 'processing'
+                ''', (datetime.now().isoformat(),))
+                conn.commit()
+                changes = conn.total_changes
+                if changes > 0:
+                    print(f"[Queue] Reset {changes} interrupted tasks to pending.")
+        except Exception as e:
+            print(f"[Queue] Error resetting tasks: {e}")
+    
     def submit_task(self, task: Task) -> bool:
         """ส่ง Task เข้าคิว"""
         try:
@@ -252,3 +268,6 @@ class AsyncSharedQueue:
     
     async def get_stats(self) -> Dict:
         return await asyncio.to_thread(self.queue.get_stats)
+    
+    async def reset_interrupted_tasks(self):
+        return await asyncio.to_thread(self.queue.reset_interrupted_tasks)

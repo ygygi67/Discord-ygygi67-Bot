@@ -226,16 +226,29 @@ def detect_anomalies(current_data: Dict, historical_data: Dict, channel_name: st
     except: pass
     return anomalies
 
+class SilentLogger:
+    def debug(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
 def _ydl_extract_video(video_id: str) -> Optional[Dict]:
     try:
-        with YoutubeDL({'quiet': True, 'no_warnings': True, 'skip_download': True, 'ignoreerrors': True}) as ydl:
+        with YoutubeDL({'quiet': True, 'no_warnings': True, 'skip_download': True, 'ignoreerrors': True, 'logger': SilentLogger()}) as ydl:
             return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
     except: return None
 
 def get_channel_data(channel_input: str) -> Optional[Dict]:
     base = f"https://www.youtube.com/channel/{channel_input}" if not channel_input.startswith('@') else f"https://www.youtube.com/{channel_input}"
     candidate_urls = [base + "/videos", base + "/shorts", base]
-    flat_opts = {'quiet': True, 'no_warnings': True, 'extract_flat': 'in_playlist', 'playlist_items': f"1-{ADVANCED_SETTINGS['max_videos_per_channel']}", 'ignoreerrors': True, 'skip_download': True}
+    flat_opts = {
+        'quiet': True, 
+        'no_warnings': True, 
+        'extract_flat': 'in_playlist', 
+        'playlist_items': f"1-{ADVANCED_SETTINGS['max_videos_per_channel']}", 
+        'ignoreerrors': True, 
+        'skip_download': True,
+        'logger': SilentLogger()
+    }
     
     for attempt in range(ADVANCED_SETTINGS['retry_attempts']):
         try:

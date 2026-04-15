@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 # Import Distributed Config
 import core.distributed_config as dcfg
 from core.distributed_config import is_master, is_worker, is_standalone, get_shard_ids
+from core.shared_queue import Task
 
 # Import custom config
 load_dotenv()
@@ -183,6 +184,7 @@ class AlphaBotBase:
     def _init_runtime_controls(self):
         cfg = load_console_control()
         self.disabled_slash_commands: set[str] = {
+            # Normalize to lower case, striped
             str(x).strip().lower()
             for x in cfg.get("disabled_slash_commands", [])
             if str(x).strip()
@@ -356,18 +358,18 @@ class AlphaBotBase:
     async def setup_hook(self):
         self._init_runtime_controls()
         # รองรับ discord.py หลายเวอร์ชัน:
-        # - บางเวอร์ชันมี add_check
-        # - บางเวอร์ชันต้องใช้ interaction_check
         if hasattr(self.tree, "add_check"):
             self.tree.add_check(self._runtime_app_command_check)
         else:
             setattr(self.tree, "interaction_check", self._runtime_app_command_check)
 
-        # Initialize queue for master mode
-        if is_master() and not is_worker():
+        # Initialize queue for master or standalone mode (any mode that isn't a dedicated worker)
+        if not is_worker():
             from core.shared_queue import AsyncSharedQueue
             self.queue = AsyncSharedQueue()
+            await self.queue.reset_interrupted_tasks() # กู้คืน Task ที่ค้างตอนรีสตาร์ท
             asyncio.create_task(self._cleanup_loop())
+            asyncio.create_task(self._task_runner_loop()) # เริ่มระบบประมวลผล Task อัตโนมัติ
         
         # Load cogs
         await self._load_cogs()
@@ -385,19 +387,17 @@ class AlphaBotBase:
             commands_list = []
             known_guild_ids = resolve_known_guild_ids()
             if known_guild_ids:
-                # 1) sync global (เปิดใช้ได้ด้วย ENABLE_GLOBAL_SYNC=1)
+                # 1) sync global
                 enable_global_sync = os.getenv("ENABLE_GLOBAL_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
                 global_cmds = []
                 if enable_global_sync:
                     global_cmds = await self.tree.sync()
                     logger.info(f"Global tree synced ({len(global_cmds)} commands)")
                 else:
-                    # สำคัญ: ห้าม clear global commands ตอนปิด global sync
-                    # เพราะจะล้าง command tree local จน guild sync ได้ 0 commands
                     global_cmds = list(self.tree.get_commands(type=discord.AppCommandType.chat_input))
                     logger.info(f"Global sync skipped (ENABLE_GLOBAL_SYNC=0) | local commands={len(global_cmds)}")
 
-                # 2) sync guild-scoped commands ทุก guild ที่รู้จัก (แก้เคสคำสั่งบางเซิร์ฟเวอร์ไม่ครบ)
+                # 2) sync guild-scoped commands ทุก guild ที่รู้จัก
                 merged = {}
                 for c in global_cmds:
                     merged[c.name] = c
@@ -431,17 +431,12 @@ class AlphaBotBase:
                 commands_list = await self.tree.sync()
                 logger.info("Global tree synced")
 
-            # Fallback: ถ้า API sync คืนค่าว่าง แต่ใน tree มีคำสั่ง local อยู่ ให้ใช้รายการ local แทน
             if not commands_list:
                 local_cmds = self.tree.get_commands(type=discord.AppCommandType.chat_input)
                 if local_cmds:
                     commands_list = list(local_cmds)
-                    logger.warning(
-                        f"⚠️ Sync API คืนค่าว่าง แต่พบคำสั่ง local {len(commands_list)} รายการ "
-                        "(ใช้รายการ local แทนเพื่อแสดงผล)"
-                    )
+                    logger.warning(f"⚠️ Sync API คืนค่าว่าง แต่พบคำสั่ง local {len(commands_list)} รายการ")
             
-            # Print command summary with wrapped lines for readability
             if commands_list:
                 cmd_names = [f"/{cmd.name}" for cmd in commands_list]
                 logger.info(f"✅ โหลดสำเร็จ {len(commands_list)} คำสั่ง:")
@@ -449,27 +444,17 @@ class AlphaBotBase:
                 for i in range(0, len(cmd_names), chunk_size):
                     logger.info(f"   > {', '.join(cmd_names[i:i + chunk_size])}")
 
-                # Sanity check: catch cases where a whole block of commands silently disappears
-                # (e.g., accidentally indented under a UI View class instead of the Cog).
                 synced_names = {cmd.name for cmd in commands_list}
                 expected_core = {"คำสั่ง", "สถิติ", "เสียง", "ระบบ", "ติดตาม", "เชิญบอทเต็ม", "โหลดคลิป"}
                 missing_expected = sorted(expected_core - synced_names)
                 if missing_expected:
-                    logger.warning(
-                        f"⚠️ คำสั่งบางส่วนหายจากการซิงค์: {', '.join('/' + n for n in missing_expected)} "
-                        f"(ถ้าไม่ตั้งใจให้หาย ให้ตรวจสอบการประกาศ @app_commands.command ใน Cog)"
-                    )
+                    logger.warning(f"⚠️ คำสั่งบางส่วนหายจากการซิงค์: {', '.join('/' + n for n in missing_expected)}")
             else:
                 logger.warning("⚠️ ไม่มีคำสั่งถูกโหลดขึ้นมาเลย")
                 
         except discord.Forbidden:
-            logger.warning(f"⚠️ Missing access to sync tree for guild {guild_id}. Falling back to global sync...")
+            logger.warning(f"⚠️ Missing access to sync tree. Falling back to global sync...")
             commands_list = await self.tree.sync()
-            cmd_names = [f"/{cmd.name}" for cmd in commands_list]
-            logger.info(f"✅ โหลดสำเร็จ {len(commands_list)} คำสั่ง (fallback):")
-            chunk_size = 8
-            for i in range(0, len(cmd_names), chunk_size):
-                logger.info(f"   > {', '.join(cmd_names[i:i + chunk_size])}")
         except Exception as e:
             logger.error(f"Failed to sync tree: {e}")
 
@@ -489,19 +474,35 @@ class AlphaBotBase:
         
         loaded_count = 0
         for root, dirs, files in os.walk(COGS_DIR):
-            if '__pycache__' in dirs:
-                dirs.remove('__pycache__')
+            # ข้ามโฟลเดอร์ที่ไม่ต้องการ (เช่น venv, git, cache) ในการท่องไดเรกทอรีถัดไป
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['venv', '.venv', 'node_modules', '__pycache__']]
             
+            # บล็อกชั้นที่ 2: ตรวจสอบ root path ปัจจุบันว่าอยู่ในโฟลเดอร์ต้องห้ามหรือไม่ (เผื่อกรณีระบบไฟล์แปลกๆ)
+            root_parts = root.replace(os.sep, '/').split('/')
+            if any(p.startswith('.') or p in ['venv', '.venv', 'node_modules', '__pycache__'] for p in root_parts):
+                continue
+
             for filename in files:
                 if filename.endswith('.py') and filename not in ignored:
-                    # แปลงที่อยู่ไฟล์จากโฟลเดอร์ให้เป็น format แบบ module import
-                    # ตัวอย่าง: cogs\admin\roles.py -> cogs.admin.roles
                     rel_path = os.path.relpath(os.path.join(root, filename), BASE_DIR)
                     module_path = rel_path.replace(os.sep, '.')[:-3]
                     cog_name = filename[:-3]
                     
                     if target_cogs is not None and cog_name not in target_cogs: continue
                     try:
+                        # ตรวจสอบเบื้องต้นว่าไฟล์มีฟังก์ชัน setup หรือไม่ (เพื่อป้องกัน Error: has no 'setup' function)
+                        has_setup = False
+                        file_path = os.path.join(root, filename)
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                                if 'async def setup' in content or 'def setup' in content:
+                                    has_setup = True
+                        except: pass
+                        
+                        if not has_setup:
+                            continue
+
                         await self.load_extension(module_path)
                         logger.info(f"{'[Worker] ' if is_worker_mode else ''}Loaded: {module_path}")
                         loaded_count += 1
@@ -509,6 +510,44 @@ class AlphaBotBase:
                         logger.error(f"❌ Failed to load {module_path}: {e}")
         
         logger.info(f"✅ Cog loading complete. Total loaded: {loaded_count}")
+
+    async def _task_runner_loop(self):
+        """ลูปสำหรับประมวลผล Task จากคิว (เช็คทุก 1 วินาทีและรันแบบ Parallel)"""
+        if not hasattr(self, 'queue'): return
+        
+        await asyncio.sleep(3)
+        logger.info("⚙️ Persistent Task Runner started (Parallel Mode).")
+        
+        while not self.is_closed():
+            try:
+                # ดึงงานประเภทที่บอทจัดการได้
+                task = await self.queue.get_next_task(['vocal_separation'])
+                if not task:
+                    await asyncio.sleep(1)
+                    continue
+
+                # รันงานแบบ Parallel (ไม่บล็อก loop)
+                asyncio.create_task(self._handle_task_safely(task))
+                # พักแป๊บนึงก่อนดึงงานถัดไปเพื่อไม่ให้ดึงรัวเกินไป
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.error(f"⚠️ Task Runner Loop error: {e}")
+                await asyncio.sleep(5)
+
+    async def _handle_task_safely(self, task: Task):
+        """ฟังก์ชันช่วยรันงานและจัดการผลลัพธ์"""
+        logger.info(f"🏃 Processing Task: {task.id} ({task.type})")
+        try:
+            if task.type == 'vocal_separation':
+                cog = self.get_cog('VocalSeparator')
+                if cog and hasattr(cog, 'process_queue_task'):
+                    await cog.process_queue_task(task)
+                else:
+                    await self.queue.complete_task(task.id, error="No handler found")
+        except Exception as e:
+            logger.error(f"❌ Critical error in task {task.id}: {e}")
+            await self.queue.complete_task(task.id, error=str(e))
 
     async def _cleanup_loop(self):
         while True:
@@ -521,20 +560,15 @@ class AlphaBotBase:
 
     async def on_ready(self):
         logger.info(f"✅ {self.mode.capitalize()} Ready! User: {self.user}")
-        
-        # Set activity
         activity_name = f"{len(self.guilds)} servers"
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=activity_name))
 
-        # Auto-join voice channel if configured
         voice_id = os.getenv('AUTO_JOIN_VOICE_ID')
         if voice_id:
             try:
-                # Wait a bit for guild cache
                 await asyncio.sleep(2)
                 channel = self.get_channel(int(voice_id)) or await self.fetch_channel(int(voice_id))
                 if channel and isinstance(channel, discord.VoiceChannel):
-                    # Check if already connected in that guild
                     if not channel.guild.voice_client:
                         await channel.connect()
                         logger.info(f"🔊 Auto-joined voice channel: {channel.name} ({voice_id})")
@@ -544,53 +578,6 @@ class AlphaBotBase:
     async def on_message(self, message):
         if message.author.bot:
             return
-
-        try:
-            display_name = message.author.display_name if isinstance(message.author, discord.Member) else message.author.name
-            username = message.author.name
-            uid = message.author.id
-            guild_name = message.guild.name if message.guild else "DM"
-            gid = message.guild.id if message.guild else "DM"
-
-            parts = []
-            if message.content and message.content.strip():
-                content = message.content.strip().replace("\n", " ")
-                if len(content) > 350:
-                    content = content[:347] + "..."
-                parts.append(content)
-
-            if message.attachments:
-                image_ext = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
-                image_links = []
-                file_links = []
-                for attachment in message.attachments:
-                    filename_lower = (attachment.filename or "").lower()
-                    content_type = (attachment.content_type or "").lower()
-                    is_image = filename_lower.endswith(image_ext) or content_type.startswith("image/")
-                    if is_image:
-                        image_links.append(attachment.url)
-                    else:
-                        file_links.append(attachment.url)
-                if image_links:
-                    parts.append("ส่งรูป: " + " | ".join(image_links[:3]))
-                if file_links:
-                    parts.append("ส่งไฟล์: " + " | ".join(file_links[:3]))
-
-            if message.stickers:
-                sticker_names = ", ".join(s.name for s in message.stickers[:3])
-                parts.append(f"ส่งสติ๊กเกอร์: {sticker_names}")
-
-            if message.embeds:
-                parts.append(f"ส่ง Embed: {len(message.embeds)} รายการ")
-
-            if not parts:
-                parts.append("[ข้อความชนิดพิเศษ/ไม่มีข้อความตัวอักษร]")
-
-            msg_text = " | ".join(parts)
-            logger.info(f"{username} ({display_name}) {uid} | {guild_name} {gid} : {msg_text}")
-        except Exception as log_err:
-            logger.warning(f"message-log format failed: {log_err}")
-
         await self.process_commands(message)
 
     async def on_disconnect(self):
@@ -620,17 +607,10 @@ class DistributedAlphaBot(AlphaBotBase, commands.AutoShardedBot):
         total_shards = dcfg.TOTAL_SHARDS
         
         if shard_ids:
-            # Clustering mode (Manual Shard IDs)
             kwargs['shard_ids'] = shard_ids
             kwargs['shard_count'] = total_shards or max(shard_ids) + 1
-            print(f"🎲 Cluster handling specific shards: {shard_ids}")
         elif total_shards:
-            # Auto-sharding with forced count
             kwargs['shard_count'] = total_shards
-            print(f"🎲 Auto Sharding Mode with {total_shards} total shards")
-        else:
-            # Pure Auto-sharding
-            print(f"🎲 Pure Auto Sharding Mode")
             
         super().__init__(command_prefix='!', intents=intents, application_id=APPLICATION_ID, **kwargs)
         self.start_time = datetime.now(timezone.utc)
@@ -654,37 +634,30 @@ def run_bot():
             bot = None
             try:
                 if is_standalone():
-                    logger.info("🤖 Starting Standalone Mode")
                     bot = AlphaBot()
                 else:
-                    logger.info(f"🤖 Starting {dcfg.BOT_MODE.upper()} Mode")
                     bot = DistributedAlphaBot()
 
                 async with bot:
                     await bot.start(TOKEN)
 
-                # ปกติ start() จะไม่หลุดออกมาถ้าไม่มีเหตุปิดบอท
                 if getattr(bot, "_stop_requested", False):
-                    logger.info("🛑 Bot stop completed")
                     return
                 if getattr(bot, "_restart_requested", False):
-                    logger.info("♻️ Bot restart requested, restarting now...")
                     attempt = 0
                     await asyncio.sleep(1.0)
                     continue
-                logger.warning("⚠️ bot.start() exited unexpectedly. Restarting...")
                 raise RuntimeError("bot.start exited unexpectedly")
 
             except KeyboardInterrupt:
-                logger.info("🛑 Shutdown requested by user")
                 return
             except (discord.GatewayNotFound, discord.ConnectionClosed, OSError, ConnectionResetError, asyncio.TimeoutError) as e:
                 delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
-                logger.warning(f"🌐 Network/Gateway error: {e}. Reconnecting in {delay}s (attempt {attempt})")
+                logger.warning(f"🌐 Network/Gateway error: {e}. Reconnecting in {delay}s")
                 await asyncio.sleep(delay)
             except Exception as e:
                 delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
-                logger.error(f"💥 Fatal runtime error: {e}. Restarting in {delay}s (attempt {attempt})")
+                logger.error(f"💥 Fatal runtime error: {e}. Restarting in {delay}s")
                 await asyncio.sleep(delay)
             finally:
                 if bot and not bot.is_closed():
