@@ -4,14 +4,14 @@ from discord.ext import commands
 import os
 import time
 import logging
-from shazamio import Shazam
+import asyncio
+from ShazamAPI import Shazam
 
 logger = logging.getLogger('discord_bot')
 
 class FindMusic(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.shazam = Shazam()
         self.temp_dir = "data/temp/shazam"
         os.makedirs(self.temp_dir, exist_ok=True)
 
@@ -28,11 +28,23 @@ class FindMusic(commands.Cog):
         try:
             await file.save(temp_path)
             
-            # Use shazamio to recognize the song
-            out = await self.shazam.recognize(temp_path)
+            # การใช้ ShazamAPI แบบ Synchronous (pydub & requests)
+            # ต้องใช้ run_in_executor (to_thread) เพื่อไม่ให้บล็อค Discord Event Loop
+            def run_shazam(fp):
+                with open(fp, "rb") as f:
+                    song_bytes = f.read()
+                    shazam = Shazam(song_bytes)
+                    recognize = shazam.recognizeSong()
+                    for offset, result in recognize:
+                        # Если нашли совпадения (matches)
+                        if result and result.get("matches"):
+                            return result
+                    return None
+
+            out = await asyncio.to_thread(run_shazam, temp_path)
             
-            if not out.get("track"):
-                return await interaction.followup.send("❌ ขออภัยครับ AI ไม่พบข้อมูลเพลงในไฟล์นี้ (อาจเป็นเพราะเสียงรบกวนเยอะไป ไม่มีเสียงร้องนิ่งๆ หรือเพลงยังไม่มีในระบบสตรีมมิ่งโลกครับ)")
+            if not out or not out.get("track"):
+                return await interaction.followup.send("❌ ขออภัยครับ AI ไม่พบข้อมูลเพลงในไฟล์นี้ (อาจเป็นเพราะเสียงรบกวนเยอะไป หรือเพลงยังไม่มีในระบบสตรีมมิ่งโลกครับ)")
                 
             track = out["track"]
             title = track.get("title", "ไม่ระบุชื่อเพลง")
@@ -50,11 +62,11 @@ class FindMusic(commands.Cog):
             embed.add_field(name="ศิลปิน", value=f"**{subtitle}**", inline=False)
             embed.add_field(name="แนวเพลง", value=f"`{genres}`", inline=True)
             
-            embed.set_footer(text="พลังโดย Shazamio API")
+            embed.set_footer(text="พลังโดย Shazam API (Python 3.13 Ready)")
             if cover_url:
                 embed.set_thumbnail(url=cover_url)
                 
-            # สร้างปุ่มค้นหาใน Youtube หรือ Spotify
+            # สร้างปุ่มค้นหาใน Youtube
             view = discord.ui.View()
             yt_url = f"https://www.youtube.com/results?search_query={title.replace(' ', '+')}+{subtitle.replace(' ', '+')}"
             view.add_item(discord.ui.Button(label="ค้นหาเพลงนี้ใน YouTube", url=yt_url, style=discord.ButtonStyle.link, emoji="▶️"))
@@ -63,7 +75,7 @@ class FindMusic(commands.Cog):
             
         except Exception as e:
             logger.error(f"[Shazam] Error recognizing file: {e}")
-            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดในการวิเคราะห์ไฟล์เสียง: {str(e)[:100]}")
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดในการวิเคราะห์ไฟล์เสียง: ขออภัย ไฟล์เสียงมีรูปแบบที่ไม่รองรับ หรือเซิร์ฟเวอร์ Shazam ปฏิเสธการเข้าถึงครับ")
         finally:
             if os.path.exists(temp_path):
                 try:
