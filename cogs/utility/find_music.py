@@ -46,7 +46,7 @@ class FindMusic(commands.Cog):
                 dl_path = os.path.join(work_dir, "downloaded.%(ext)s")
                 cmd = ["yt-dlp", "--no-playlist", "-x", "--audio-format", "mp3", "-o", dl_path, url]
                 proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                await proc.wait()
+                stdout, stderr = await proc.communicate()
                 
                 for f in os.listdir(work_dir):
                     if f.startswith("downloaded"):
@@ -54,7 +54,10 @@ class FindMusic(commands.Cog):
                         break
                 
                 if not temp_path or not os.path.exists(temp_path):
-                    return await status_msg.edit(content="❌ ไม่สามารถดาวน์โหลดเสียงจากลิงก์ได้ครับ (อาจเป็นลิงก์ส่วนตัว หรือไม่รองรับ)")
+                    err_msg = stderr.decode('utf-8', errors='ignore')
+                    if "Log in for access" in err_msg or "Sign in to confirm" in err_msg:
+                        return await status_msg.edit(content="❌ ดาวน์โหลดไม่ได้ครับ: คลิปนี้ถูก TikTok บล็อกการเข้าถึงจากภายนอก (เนื้อหาติดเรท/จำกัดอายุ) แนะนำให้โหลดวิดีโอเข้าเครื่องแล้วอัปโหลดไฟล์ส่งให้ผมแทนครับ")
+                    return await status_msg.edit(content="❌ ไม่สามารถดาวน์โหลดเสียงจากลิงก์ได้ครับ (ลิงก์อาจถูกตั้งค่าส่วนตัว หรือระบบป้องกันดาวน์โหลด)")
 
             # 2. First Pass Shazam (วิเคราะห์จากต้นฉบับก่อน)
             def run_shazam(fp):
