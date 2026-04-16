@@ -8,6 +8,7 @@ import shutil
 import logging
 import time
 import aiohttp
+import json
 from pathlib import Path
 from typing import Optional, Dict, List
 from core.shared_queue import Task
@@ -23,6 +24,44 @@ class VocalSeparator(commands.Cog):
         self.ai_semaphore = asyncio.Semaphore(2)
         # เก็บรายการ process ที่กำลังทำงานอยู่ เพื่อสั่ง kill ตอนปิดบอท
         self.active_processes = set()
+        self.perf_file = "data/vsep_performance.json"
+        self._ensure_perf_file()
+
+    def _ensure_perf_file(self):
+        if not os.path.exists(self.perf_file):
+            defaults = {
+                "vocals_std": {"avg": 40, "count": 1},
+                "vocals_ultra": {"avg": 75, "count": 1},
+                "stems_4": {"avg": 130, "count": 1},
+                "stems_6": {"avg": 210, "count": 1}
+            }
+            with open(self.perf_file, 'w', encoding='utf-8') as f:
+                json.dump(defaults, f, indent=2)
+
+    def _get_avg_time(self, mode: str) -> float:
+        try:
+            with open(self.perf_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get(mode, {}).get("avg", 60)
+        except: return 60
+
+    def _update_perf(self, mode: str, duration: float):
+        try:
+            with open(self.perf_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            entry = data.get(mode, {"avg": duration, "count": 0})
+            old_avg = entry["avg"]
+            count = entry["count"]
+            
+            # Simple moving average
+            new_avg = (old_avg * count + duration) / (count + 1)
+            data[mode] = {"avg": new_avg, "count": count + 1}
+            
+            with open(self.perf_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"[Separator] Perf update error: {e}")
 
     async def cog_unload(self):
         """ล้างงานที่ค้างอยู่ตอนปิด/โหลดใหม่"""
@@ -241,12 +280,38 @@ class VocalSeparator(commands.Cog):
                     active = await self.bot.queue.get_active_count('vocal_separation')
                     if active > 1: q_info = f"\n📊 (มีงานอื่นส่งมาพร้อมกัน {active-1} งาน - กำลังประมวลผลต่อ)"
                 
-                await update_status(status_prefix + f"🧠 **เริ่มประมวลผล:** `{model_name}`{q_info}\n*(อาจใช้เวลาข้าม 1-3 นาที กรุณารอสักครู่)*")
+                avg_total = self._get_avg_time(mode)
+                start_ai_ts = time.time()
+                
+                # ฟังก์ชันจำลอง Progress Bar และเวลาที่เหลือ
+                async def progress_updater(main_task):
+                    while not main_task.done():
+                        elapsed = time.time() - start_ai_ts
+                        remaining = max(5, avg_total - elapsed)
+                        percent = min(95, int((elapsed / (elapsed + remaining)) * 100))
+                        
+                        bar_len = 10
+                        filled = int(bar_len * percent / 100)
+                        bar = "▰" * filled + "▱" * (bar_len - filled)
+                        
+                        etc_text = f"⏳ ใช้ไป: `{int(elapsed)}s` | คาดว่าเสร็จในอีก: `{int(remaining)}s`"
+                        await update_status(status_prefix + f"🧠 **กำลังประมวลผล:** `{model_name}`{q_info}\n\n{bar} `{percent}%`\n{etc_text}\n*(กำลังใช้ AI แยกเสียงออกจากกัน...)*")
+                        await asyncio.sleep(8)
+
+                # รันแยกเสียง
                 output_dir = os.path.join(work_path, "output")
                 os.makedirs(output_dir, exist_ok=True)
                 
-                # รันแยกเสียง
-                await self._run_separator(input_file, output_dir, model_name)
+                # สร้าง Task สำหรับรันคำสั่ง
+                separator_task = asyncio.create_task(self._run_separator(input_file, output_dir, model_name))
+                # สร้าง Task สำหรับอัปเดต UI
+                update_task = asyncio.create_task(progress_updater(separator_task))
+                
+                await separator_task
+                update_task.cancel()
+                
+                actual_duration = time.time() - start_ai_ts
+                self._update_perf(mode, actual_duration)
             
             # 4. ตรวจสอบและส่งผลลัพธ์
             output_files = list(Path(output_dir).glob("*.mp3"))
@@ -257,11 +322,11 @@ class VocalSeparator(commands.Cog):
 
             await update_status(status_prefix + "✅ แยกเสียงร้องสำเร็จแล้ว! กำลังตรวจสอบขนาดไฟล์...")
             
-            # คำนวณขีดจำกัดการอัปโหลด (25MB มาตรฐาน)
-            upload_limit = 24 * 1024 * 1024 
+            # คำนวณขีดจำกัดการอัปโหลด (ดิสคอร์ดปรับลดมาตรฐานเหลือ 10MB ในหลายเซิร์ฟเวอร์)
+            upload_limit = 10 * 1024 * 1024 
             if channel.guild:
                 if channel.guild.premium_tier >= 3: upload_limit = 95 * 1024 * 1024
-                elif channel.guild.premium_tier == 2: upload_limit = 48 * 1024 * 1024
+                elif channel.guild.premium_tier >= 2: upload_limit = 48 * 1024 * 1024
 
             direct_files = []
             cloud_links = []
@@ -301,9 +366,24 @@ class VocalSeparator(commands.Cog):
                         if he.status == 413:
                             # ถ้าส่งทีละไฟล์ยังเกิน (ไฟล์เดียว > Limit) ให้พยายามอัพขึ้น Cloud
                             logger.warning(f"[Separator] Single file too large for Discord: {f.filename}")
-                            # หมายเหตุ: ในขั้นตอนนี้เราอาจจะไม่ได้อัพขึ้น Cloud อัตโนมัติ เพราะ File object ถูกอ่านไปแล้วบางส่วน
-                            # แต่ระบบหลักด้านบนมีการเช็คเช็คขนาดไฟล์และอัพขึ้น Cloud ไปบ้างแล้วถ้านามสกุลไฟล์ตรง
-                            await channel.send(f"⚠️ ไฟล์ `{f.filename}` มีขนาดใหญ่เกินกว่าที่เซิร์ฟเวอร์นี้จะรับได้โดยตรง")
+                            await channel.send(f"☁️ ไฟล์ `{f.filename}` ใหญ่เกินขีดจำกัดของเซิร์ฟเวอร์ กำลังอัพโหลดขึ้น Cloud โดยอัตโนมัติ...")
+                            
+                            try:
+                                # Get original path from discord.File object
+                                local_fp = getattr(f.fp, 'name', None)
+                                # ต้องปิดไฟล์ก่อนนำไปใช้อีกครั้งเพื่อหลีกเลี่ยง Permission Error (Windows)
+                                f.close() 
+                                
+                                if local_fp and os.path.exists(local_fp):
+                                    link = await self._upload_to_catbox(local_fp, f.filename)
+                                    if link:
+                                        await channel.send(f"☁️ **ดาวน์โหลด `{f.filename}` (Cloud):**\n- {link}")
+                                    else:
+                                        await channel.send(f"⚠️ `{f.filename}` - มีขนาดใหญ่เกินไปและอัพโหลด Cloud ล้มเหลว")
+                                else:
+                                    await channel.send(f"⚠️ ไม่สามารถอัพโหลด `{f.filename}` ขึ้น Cloud ได้")
+                            except Exception as ex:
+                                logger.error(f"[Separator] Advanced Catbox fallback failed: {ex}")
                         else:
                             logger.error(f"[Separator] Error sending file {f.filename}: {he}")
                     finally:
@@ -328,33 +408,6 @@ class VocalSeparator(commands.Cog):
         finally:
             shutil.rmtree(work_path, ignore_errors=True)
 
-    @app_commands.command(name="เช็คคิวแยกเสียง", description="ดูรายการงานแยกเสียงที่กำลังรอคิว")
-    async def check_queue(self, interaction: discord.Interaction):
-        if not hasattr(self.bot, 'queue'):
-            return await interaction.response.send_message("❌ ระบบคิวไม่พร้อมใช้งาน", ephemeral=True)
-        
-        stats = await self.bot.queue.get_stats()
-        pending = stats.get('pending', 0)
-        processing = stats.get('processing', 0)
-        completed = stats.get('completed', 0)
-        failed = stats.get('failed', 0)
-        
-        embed = discord.Embed(
-            title="📊 สถิติคิวงานแยกเสียง (AI Vocal Separator)",
-            color=discord.Color.blue(),
-            timestamp=discord.utils.utcnow()
-        )
-        embed.add_field(name="⏳ กำลังรอคิว", value=f"`{pending}` งาน", inline=True)
-        embed.add_field(name="🏃 กำลังประมวลผล", value=f"`{processing}` งาน", inline=True)
-        embed.add_field(name="✅ สำเร็จแล้ว", value=f"`{completed}` งาน", inline=True)
-        embed.add_field(name="❌ ล้มเหลว", value=f"`{failed}` งาน", inline=True)
-        
-        msg = "💡 ระบบระจำกัดให้รันพร้อมกันได้สูงสุด `2` งาน เพื่อความเสถียรครับ"
-        if pending > 0:
-            msg += f"\nคิวของคุณจะเริ่มทำงานทันทีเมื่อถึงลำดับครับ"
-            
-        embed.set_footer(text=msg)
-        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(VocalSeparator(bot))
