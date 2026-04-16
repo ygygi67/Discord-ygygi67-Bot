@@ -7,9 +7,11 @@ import re
 import os
 import json
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 from collections import deque
+from core.distributed_config import is_master, is_standalone
 
 logger = logging.getLogger("discord_bot")
 MAX_BOARD_USERS = 1000
@@ -414,7 +416,21 @@ class FollowersCog(commands.Cog):
         self.tracked_users = self.load_tracking_data() # {roblox_id: [channel_id, ...]}
         self.presence_boards = self.load_presence_boards()
         self.activity_data = self.load_activity_data()
+        self.presence_cache = self.load_presence_cache()
         self.last_presence = self.load_last_presence() # {roblox_id: last_presence_type}
+        
+        # Initialize and populate from cache
+        self.last_online_ts: Dict[str, float] = {}
+        self.game_started_at: Dict[str, float] = {}
+        self.game_total_seconds: Dict[str, float] = {}
+        
+        for rid, item in self.presence_cache.items():
+            if isinstance(item, dict):
+                if "game_duration_sec" in item:
+                    self.game_total_seconds[rid] = float(item["game_duration_sec"])
+                if "last_online_ts" in item:
+                    self.last_online_ts[rid] = float(item["last_online_ts"])
+
         self._last_notify_ts: Dict[str, float] = {}   # {roblox_id: last_notify_ts}
         self.activity_dirty = False
         self.last_friend_fetch_note = ""
@@ -447,14 +463,23 @@ class FollowersCog(commands.Cog):
             return False
 
     def load_tracking_data(self):
-        """โหลดข้อมูลการติดตามจากไฟล์"""
+        """โหลดข้อมูลการติดตามจากไฟล์ (พร้อมระบบล้างข้อมูลซ้ำ)"""
+        data = {}
         try:
             if os.path.exists(self.tracking_file):
                 with open(self.tracking_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
         except Exception as e:
-            print(f"Error loading tracking data: {e}")
-        return {}
+            logger.error(f"Error loading tracking data: {e}")
+        
+        # ล้างข้อมูลซ้ำซ้อน (Deduplicate) เผื่อในไฟล์มีค่าซ้ำ
+        clean_tracked = {}
+        if isinstance(data, dict):
+            for rid, channels in data.items():
+                if isinstance(channels, list):
+                    # เอาเฉพาะค่าที่ไม่เป็น None และไม่ซ้ำ
+                    clean_tracked[str(rid)] = list(set([str(c) for c in channels if c]))
+        return clean_tracked
 
     async def save_tracking_data(self):
         """บันทึกข้อมูลการติดตามลงไฟล์ (Non-blocking)"""
@@ -1421,6 +1446,20 @@ class FollowersCog(commands.Cog):
 
     @tasks.loop(seconds=60) # ตรวจสอบทุก 60 วินาที เพื่อเลี่ยงการโดนแบนจาก Roblox API
     async def check_presence_task(self):
+        # ป้องกันการรันซ้ำซ้อนในระบบ Sharding หรือ Distributed
+        # ให้รันเฉพาะบน Master Node หรือ Shard 0 ของ Standalone เท่านั้น
+        is_primary = False
+        if is_standalone():
+            # ถ้าเป็น standalone ให้รันเฉพาะ shard แรก (ถ้ามีหลาย shard)
+            if self.bot.shard_id is None or self.bot.shard_id == 0:
+                is_primary = True
+        elif is_master():
+            # ถ้าเป็น master ให้รันเสมอ
+            is_primary = True
+            
+        if not is_primary:
+            return
+
         if not self.tracked_users:
             return
             
@@ -1556,7 +1595,13 @@ class FollowersCog(commands.Cog):
             await self.save_presence_boards()
 
     async def notify_presence_change(self, roblox_id, p_type, location):
-        """แจ้งเตือนการเปลี่ยนแปลงไปยังทุก Channel ที่เลือกไว้"""
+        """แจ้งเตือนการเปลี่ยนแปลงไปยังทุก Channel ที่เลือกไว้ (พร้อมระบบกันแจ้งเตือนซ้ำ)"""
+        # โหลดสถานะล่าสุดจากไฟล์อีกครั้งเพื่อเช็คว่า instance อื่นส่งไปหรือยัง (Just-in-time check)
+        current_last = self.load_last_presence()
+        if current_last.get(str(roblox_id)) == p_type:
+            # สถานะในไฟล์ถูกอัปเดตเป็นอันเดียวกับที่เราจะแจ้งแล้ว (แปลว่าคนอื่นแจ้งไปแล้ว)
+            return
+
         channels_ids = self.tracked_users.get(roblox_id, [])
         if not channels_ids: return
         

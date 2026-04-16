@@ -100,7 +100,7 @@ ANOMALY_THRESHOLDS = {
 }
 
 SQL_SETTINGS = {
-    'enable': os.getenv('YOUTUBE_SPY_SQL_ENABLE', 'True').lower() == 'true',
+    'enable': os.getenv('YOUTUBE_SPY_SQL_ENABLE', 'False').lower() == 'true',
     'host': os.getenv('YOUTUBE_SPY_SQL_HOST', ''),
     'port': int(os.getenv('YOUTUBE_SPY_SQL_PORT', '4000')),
     'database': os.getenv('YOUTUBE_SPY_SQL_DB', 'test'),

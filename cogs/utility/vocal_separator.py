@@ -7,6 +7,7 @@ import tempfile
 import shutil
 import logging
 import time
+import aiohttp
 from pathlib import Path
 from typing import Optional, Dict, List
 from core.shared_queue import Task
@@ -121,7 +122,6 @@ class VocalSeparator(commands.Cog):
 
         await interaction.response.defer(thinking=True)
         
-        # แผนผังโมเดลที่รองรับใน audio-separator v0.44.1+
         model_map = {
             "vocals_std": "UVR-MDX-NET-Voc_FT.onnx",
             "vocals_ultra": "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
@@ -145,11 +145,41 @@ class VocalSeparator(commands.Cog):
         task = Task(id=task_id, type='vocal_separation', data=task_data)
         
         if hasattr(self.bot, 'queue'):
+            # ตรวจสอบลำดับคิว
+            queue_pos = 1
+            if hasattr(self.bot.queue, 'get_queue_position'):
+                queue_pos = await self.bot.queue.get_queue_position(task_id, 'vocal_separation')
+            
+            # ดึง Original Response เพื่อเอา ID มาใช้อัปเดตสถานะ (แบบเดียวกับโหลดคลิป)
+            msg = await interaction.original_response()
+            task_data["msg_id"] = msg.id
+            
             await self.bot.queue.submit_task(task)
-            await interaction.followup.send(f"📥 **รับงานเข้าคิวเรียบร้อย!** (โหมด: `{mode}`)\n(ID: `{task_id}`)\nระบบจะส่งไฟล์ให้ในห้องนี้เมื่อเสร็จสิ้นครับ")
+            
+            await interaction.edit_original_response(
+                content=f"📥 **รับงานแยกเสียงร้องเรียบร้อย!**\n🆔 `งาน: {task_id}`\n📊 คิวปัจจุบัน: `ลำดับที่ {queue_pos}`\n⚙️ โหมด: `{mode}`\n⏳ ระบบจะแจ้งเตือนที่นี่เมื่อเสร็จสิ้น..."
+            )
         else:
             await interaction.followup.send("⚠️ ระบบคิวไม่พร้อมใช้งาน จะรันงานแบบชั่วคราว (ไม่รันต่อถ้ารีสตาร์ท)")
             asyncio.create_task(self.process_queue_task(task))
+    async def _upload_to_catbox(self, file_path: str, filename: str) -> Optional[str]:
+        """อัปโหลดไฟล์ขึ้น catbox.moe"""
+        try:
+            url = "https://catbox.moe/user/api.php"
+            async with aiohttp.ClientSession() as session:
+                with open(file_path, 'rb') as f:
+                    data = aiohttp.FormData()
+                    data.add_field('reqtype', 'fileupload')
+                    data.add_field('fileToUpload', f, filename=filename)
+                    async with session.post(url, data=data, timeout=aiohttp.ClientTimeout(total=300)) as resp:
+                        if resp.status == 200:
+                            result = await resp.text()
+                            if result.strip().startswith("https://"):
+                                return result.strip()
+                        logger.warning(f"[Separator] Catbox upload failed: HTTP {resp.status}")
+        except Exception as e:
+            logger.warning(f"[Separator] Catbox upload error: {e}")
+        return None
 
     async def process_queue_task(self, task: Task):
         """จัดการงานจากคิว ประมวลผล และส่งผลลัพธ์ลง Channel (รองรับ Session Resilience)"""
@@ -161,118 +191,141 @@ class VocalSeparator(commands.Cog):
         user_id = task.data.get('user_id')
         mode = task.data.get('mode', 'vocals_std')
         model_name = task.data.get('model', 'UVR-MDX-NET-Voc_FT.onnx')
+        msg_id = task.data.get("msg_id")
         
-        # ค้นหา Channel
         channel = self.bot.get_channel(channel_id)
         if not channel:
             try: channel = await self.bot.fetch_channel(channel_id)
             except: return
 
-        status_prefix = f"🎵 **[AI Vocal Separator]**\n👤 ผู้ขอ: <@{user_id}>\n🏷️ โหมด: `{mode}`\n🔗 ลิงก์: {link}\n"
+        # พยายามดึงข้อความเดิมที่สร้างไว้ตอนสั่ง (จะอัปเดตข้อความเดิมแบบโหลดคลิป)
+        progress_msg = None
+        if msg_id:
+            for _ in range(3): # ลองใหม่ 3 ครั้งเผื่อ Discord ยังบันทึกข้อความไม่เสร็จ
+                try:
+                    progress_msg = await channel.fetch_message(msg_id)
+                    break
+                except:
+                    await asyncio.sleep(1)
+
+        status_prefix = f"🎙️ **[AI Vocal Separator]**\n👤 <@{user_id}>\n🏷️ โหมด: `{mode}`\n"
         work_path = os.path.join(self.temp_dir, task.id)
         os.makedirs(work_path, exist_ok=True)
         
-        progress_msg = None
-        
-        # ฟังก์ชันช่วยส่งข้อความแบบปลอดภัย
-        async def safe_send(text, **kwargs):
-            if not self.bot.is_ready() or self.bot.is_closed(): return None
-            try: return await channel.send(text, **kwargs)
-            except: return None
-
-        async def safe_edit(msg, text):
-            if not msg or self.bot.is_closed(): return
-            try: await msg.edit(content=text)
-            except: pass
+        # ฟังก์ชันช่วยอัปเดตข้อความอย่างปลอดภัย
+        async def update_status(text):
+            nonlocal progress_msg
+            if not progress_msg:
+                progress_msg = await channel.send(text)
+                return
+            try:
+                await progress_msg.edit(content=text)
+            except:
+                progress_msg = await channel.send(text)
 
         try:
-            # รายงานสถานะเริ่มต้น
-            progress_msg = await safe_send(status_prefix + "⏳ ระบบกำลังเตรียมการ...")
+            # 1. เตรียมระบบและรายงานสถานะ
+            await update_status(status_prefix + "⏳ กำลังเริ่มเตรียมการ (เตรียม Folder)...")
             
-            # 1. ดาวน์โหลด
-            await safe_edit(progress_msg, status_prefix + "⏳ กำลังดาวน์โหลดไฟล์เสียงจาก YouTube...")
+            # 2. ดาวน์โหลดเสียง
+            await update_status(status_prefix + "⏳ กำลังดาวน์โหลดและแยกเสียงจาก YouTube/TikTok...")
             input_file, video_title = await self._download_audio(link, work_path)
             
-            # 2. แยกเสียง (ใช้ Semaphore จำกัดการรันพร้อมกัน)
-            update_text = status_prefix + f"📦 ไฟล์: **{video_title}**\n"
-            await safe_edit(progress_msg, update_text + "⏳ รอคิวว่างสำหรับ AI (Queueing...)")
+            # 3. รัน AI
+            await update_status(status_prefix + f"🧠 กำลังจองคิวประมวลผล AI: **{video_title}**...")
             
             async with self.ai_semaphore:
-                engine_msg = "Initializing BS-Roformer..." if "Roformer" in model_name else "Initializing AI Engine..."
-                if "demucs" in model_name: engine_msg = "Initializing Demucs Stems Engine..."
+                # ตรวจสอบคิวในขณะนั้นเพื่อรายงาน
+                q_info = ""
+                if hasattr(self.bot, 'queue') and hasattr(self.bot.queue, 'get_active_count'):
+                    active = await self.bot.queue.get_active_count('vocal_separation')
+                    if active > 1: q_info = f"\n📊 (มีงานอื่นส่งมาพร้อมกัน {active-1} งาน - กำลังประมวลผลต่อ)"
                 
-                await safe_edit(progress_msg, update_text + f"⏳ [░░░░░░░░░░] 0% ({engine_msg})")
-                
+                await update_status(status_prefix + f"🧠 **เริ่มประมวลผล:** `{model_name}`{q_info}\n*(อาจใช้เวลาข้าม 1-3 นาที กรุณารอสักครู่)*")
                 output_dir = os.path.join(work_path, "output")
                 os.makedirs(output_dir, exist_ok=True)
                 
                 # รันแยกเสียง
-                sep_task = asyncio.create_task(self._run_separator(input_file, output_dir, model_name))
-                
-                # จำลอง Progress Bar ให้ดูมีความเคลื่อนไหว
-                steps = [
-                    "▓░░░░░░░░░] 10% (Loading Models...)",
-                    "▓▓░░░░░░░░] 25% (Scanning Audio Patterns...)",
-                    "▓▓▓░░░░░░░] 35% (Deep Learning Processing...)",
-                    "▓▓▓▓░░░░░░] 45% (Isolating Components...)",
-                    "▓▓▓▓▓░░░░░] 55% (Applying Filters...)",
-                    "▓▓▓▓▓▓░░░░] 65% (Reconstruction Artifacts...)",
-                    "▓▓▓▓▓▓▓░░░] 75% (Combining Stems...)",
-                    "▓▓▓▓▓▓▓▓░░] 85% (Optimizing Output...)",
-                    "▓▓▓▓▓▓▓▓▓░] 95% (Encoding MP3s...)"
-                ]
-                
-                for step in steps:
-                    if sep_task.done(): break
-                    await safe_edit(progress_msg, update_text + f"⏳ [{step}")
-                    wait_time = 15 if "stems" in mode else 8
-                    await asyncio.sleep(wait_time)
-                    
-                await sep_task
-                await safe_edit(progress_msg, update_text + "✅ [▓▓▓▓▓▓▓▓▓▓] 100% (AI Processing Finished!)")
+                await self._run_separator(input_file, output_dir, model_name)
             
-            # 3. ส่งไฟล์
-            result_files = [str(f) for f in Path(output_dir).glob("*.mp3")]
-            if not result_files: raise Exception("AI ไม่สามารถสร้างไฟล์ผลลัพธ์ได้ (อาจเป็นเพราะลิขสิทธิ์หรือไฟล์ต้นฉบับมีปัญหา)")
+            # 4. ตรวจสอบและส่งผลลัพธ์
+            output_files = list(Path(output_dir).glob("*.mp3"))
+            if not output_files:
+                output_files = list(Path(output_dir).glob("*.*"))
+                if not output_files:
+                    raise Exception("AI ไม่สามารถสร้างไฟล์ผลลัพธ์ได้ (อาจเป็นเพราะลิขสิทธิ์หรือไฟล์ต้นฉบับมีปัญหา)")
+
+            await update_status(status_prefix + "✅ แยกเสียงร้องสำเร็จแล้ว! กำลังตรวจสอบขนาดไฟล์...")
             
-            files_to_send = []
-            for fpath in result_files:
-                fname = os.path.basename(fpath)
-                final_name = video_title
-                
-                if "(Vocals)" in fname or "_vocals" in fname: final_name += " (เสียงร้อง).mp3"
-                elif "(Instrumental)" in fname or "_vocal_less" in fname: final_name += " (ดนตรี).mp3"
-                elif "drums" in fname: final_name += " (กลอง).mp3"
-                elif "bass" in fname: final_name += " (เบส).mp3"
-                elif "guitar" in fname: final_name += " (กีตาร์).mp3"
-                elif "piano" in fname: final_name += " (เปียโน).mp3"
-                elif "other" in fname: final_name += " (เสียงอื่นๆ).mp3"
-                else: final_name += f"_{fname}"
-                
-                files_to_send.append(discord.File(fpath, filename=final_name))
+            # คำนวณขีดจำกัดการอัปโหลด (25MB มาตรฐาน)
+            upload_limit = 24 * 1024 * 1024 
+            if channel.guild:
+                if channel.guild.premium_tier >= 3: upload_limit = 95 * 1024 * 1024
+                elif channel.guild.premium_tier == 2: upload_limit = 48 * 1024 * 1024
+
+            direct_files = []
+            cloud_links = []
             
-            if channel:
-                chunks = [files_to_send[i:i + 10] for i in range(0, len(files_to_send), 10)]
-                for i, chunk in enumerate(chunks):
-                    prefix = "✅ **แยกเสียงสำเร็จ!**" if i == 0 else ""
+            for fpath in output_files:
+                fsize = os.path.getsize(str(fpath))
+                if fsize < 100: continue
+                
+                fname = os.path.basename(fpath).lower()
+                clean_name = video_title
+                if "vocals" in fname: clean_name += " (เสียงร้อง).mp3"
+                elif "instrumental" in fname or "vocal_less" in fname: clean_name += " (ดนตรี).mp3"
+                elif "drums" in fname: clean_name += " (กลอง).mp3"
+                elif "bass" in fname: clean_name += " (เบส).mp3"
+                elif "guitar" in fname: clean_name += " (กีตาร์).mp3"
+                elif "piano" in fname: clean_name += " (เปียโน).mp3"
+                elif "other" in fname: clean_name += " (อื่นๆ).mp3"
+                else: clean_name += f"_{os.path.basename(fpath)}"
+
+                if fsize > upload_limit:
+                    await update_status(status_prefix + f"☁️ ไฟล์ `{clean_name}` ใหญ่เกินไป ({fsize/(1024*1024):.1f}MB) กำลังอัพโหลดขึ้น Cloud...")
+                    link = await self._upload_to_catbox(str(fpath), clean_name)
+                    if link:
+                        cloud_links.append(f"- [{clean_name}]({link}) ({fsize/(1024*1024):.1f}MB)")
+                    else:
+                        cloud_links.append(f"- ⚠️ {clean_name} (ใหญ่เกินไปและอัพโหลด Cloud ล้มเหลว)")
+                else:
+                    direct_files.append(discord.File(str(fpath), filename=clean_name))
+
+            # ส่งไฟล์ทีละไฟล์เพื่อป้องกัน 413 Payload Too Large (เมื่อขนาดรวมทุกไฟล์เกินขีดจำกัด)
+            if direct_files:
+                for idx, f in enumerate(direct_files, start=1):
                     try:
-                        await channel.send(content=f"{prefix}\n📦 คลิป: **{video_title}**\n👤 <@{user_id}>\nโหมด: `{mode}`", files=chunk)
-                    except:
-                        await asyncio.sleep(3)
-                        await channel.send(content=f"{prefix}\n📦 คลิป: **{video_title}**\n👤 <@{user_id}>", files=chunk)
-            
+                        content = f"📦 **ผลลัพธ์ AI** ({idx}/{len(direct_files)})"
+                        await channel.send(content=content, file=f)
+                    except discord.HTTPException as he:
+                        if he.status == 413:
+                            # ถ้าส่งทีละไฟล์ยังเกิน (ไฟล์เดียว > Limit) ให้พยายามอัพขึ้น Cloud
+                            logger.warning(f"[Separator] Single file too large for Discord: {f.filename}")
+                            # หมายเหตุ: ในขั้นตอนนี้เราอาจจะไม่ได้อัพขึ้น Cloud อัตโนมัติ เพราะ File object ถูกอ่านไปแล้วบางส่วน
+                            # แต่ระบบหลักด้านบนมีการเช็คเช็คขนาดไฟล์และอัพขึ้น Cloud ไปบ้างแล้วถ้านามสกุลไฟล์ตรง
+                            await channel.send(f"⚠️ ไฟล์ `{f.filename}` มีขนาดใหญ่เกินกว่าที่เซิร์ฟเวอร์นี้จะรับได้โดยตรง")
+                        else:
+                            logger.error(f"[Separator] Error sending file {f.filename}: {he}")
+                    finally:
+                        try: f.close()
+                        except: pass
+
+            # แสดงลิงก์ Cloud (ถ้ามี)
+            cloud_links_text = ""
+            if cloud_links:
+                cloud_links_text = "\n\n☁️ **ไฟล์ที่ขนาดใหญ่เกิน Discord Limit:**\n" + "\n".join(cloud_links)
+
+            await update_status(status_prefix + f"✅ **แยกเสียงสำเร็จ!**\n🎬 ชื่อคลิป: **{video_title}**\n📦 รวม {len(output_files)} ไฟล์เรียบร้อย" + cloud_links_text)
+
             if hasattr(self.bot, 'queue'):
                 await self.bot.queue.complete_task(task.id, result={"title": video_title})
-                
+
         except Exception as e:
-            err_text = f"❌ เกิดข้อผิดพลาดในงาน `{task.id}`: {str(e)}"
-            logger.error(f"[Separator] {err_text}")
-            if channel: await safe_send(err_text)
-            if hasattr(self.bot, 'queue'): await self.bot.queue.complete_task(task.id, error=str(e))
+            logger.error(f"[Separator] ❌ Error in task `{task.id}`: {e}")
+            await update_status(status_prefix + f"❌ **เกิดข้อผิดพลาด:** `{str(e)}`")
+            if hasattr(self.bot, 'queue'):
+                await self.bot.queue.complete_task(task.id, error=str(e))
         finally:
-            if progress_msg:
-                try: await progress_msg.delete()
-                except: pass
             shutil.rmtree(work_path, ignore_errors=True)
 
     @app_commands.command(name="เช็คคิวแยกเสียง", description="ดูรายการงานแยกเสียงที่กำลังรอคิว")

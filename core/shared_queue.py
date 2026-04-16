@@ -191,6 +191,35 @@ class SharedQueue:
                 return cursor.fetchone()[0]
         except:
             return 0
+
+    def get_queue_position(self, task_id: str, task_type: str) -> int:
+        """หาตำแหน่งคิวของ Task นี้ (นับเฉพาะที่ยังไม่เริ่มทำ)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("SELECT created_at FROM tasks WHERE id = ?", (task_id,))
+                row = cursor.fetchone()
+                if not row: return 0
+                created_at = row[0]
+                
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE status = 'pending' AND type = ? AND created_at < ?",
+                    (task_type, created_at)
+                )
+                return cursor.fetchone()[0] + 1
+        except:
+            return 0
+
+    def get_active_count(self, task_type: str) -> int:
+        """จำนวน Task ที่กำลังประมวลผลอยู่"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE status = 'processing' AND type = ?",
+                    (task_type,)
+                )
+                return cursor.fetchone()[0]
+        except:
+            return 0
     
     def get_stats(self) -> Dict:
         """สถิติของคิว"""
@@ -268,6 +297,12 @@ class AsyncSharedQueue:
     
     async def get_stats(self) -> Dict:
         return await asyncio.to_thread(self.queue.get_stats)
+    
+    async def get_queue_position(self, task_id: str, task_type: str) -> int:
+        return await asyncio.to_thread(self.queue.get_queue_position, task_id, task_type)
+    
+    async def get_active_count(self, task_type: str) -> int:
+        return await asyncio.to_thread(self.queue.get_active_count, task_type)
     
     async def reset_interrupted_tasks(self):
         return await asyncio.to_thread(self.queue.reset_interrupted_tasks)
