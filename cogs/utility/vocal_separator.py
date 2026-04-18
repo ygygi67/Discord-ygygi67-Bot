@@ -119,12 +119,16 @@ class VocalSeparator(commands.Cog):
 
     async def _run_separator(self, input_path: str, output_dir: str, model_name: str):
         """รันกระบวนการแยกเสียงใน Subprocess"""
+        model_dir = os.path.abspath("data/models/separator")
+        os.makedirs(model_dir, exist_ok=True)
+        
         cmd = [
             "audio-separator",
             input_path,
             "--output_dir", output_dir,
             "--model_filename", model_name,
-            "--output_format", "MP3"
+            "--output_format", "MP3",
+            "--model_file_dir", model_dir
         ]
         
         process = await asyncio.create_subprocess_exec(
@@ -140,7 +144,9 @@ class VocalSeparator(commands.Cog):
         if process.returncode != 0:
             err_msg = stderr.decode() if stderr else "Unknown error"
             logger.error(f"[Separator] CLI Error: {err_msg}")
-            raise Exception(f"AI ทำงานล้มเหลว: {err_msg[:100]}")
+            # Show the last part of the output where the actual error is, avoiding startup info logs
+            short_err = err_msg[-300:].strip() if err_msg else "Unknown"
+            raise Exception(f"AI ทำงานล้มเหลว: {short_err}")
             
         return output_dir
 
