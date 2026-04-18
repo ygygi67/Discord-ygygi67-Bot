@@ -42,20 +42,81 @@ class TTSCommand(commands.Cog):
         self.bot = bot
         self.tts_queue = {}  # {guild_id: asyncio.Queue}
         self.is_playing = {} # {guild_id: bool}
+        self.state_file = 'data/tts_state.json'
+        self.active_filenames = set() # เก็บไฟล์ที่ยังต้องใช้ห้ามลบ
         self.cleanup_task = self.bot.loop.create_task(self._initial_cleanup())
 
-    async def _initial_cleanup(self):
-        """ลบไฟล์ขยะที่ค้างจากการรันครั้งก่อน"""
+    async def cog_load(self):
+        """เมื่อโหลด Cog ให้ทำการพยายามพูดต่อจากเดิม"""
+        asyncio.create_task(self._auto_resume())
+
+    def _save_state(self):
+        """บันทึกสถานะคิวลงไฟล์"""
+        try:
+            os.makedirs('data', exist_ok=True)
+            data = {}
+            for gid, q in self.tts_queue.items():
+                # ดึงรายการทั้งหมดใน Queue ออกมาจดไว้ (เนื่องจาก asyncio.Queue ไม่มีวิธีดูตรงๆ ต้องแปลง)
+                # เราจะจดเฉพาะคิวที่ค้างอยู่
+                items = list(q._queue)
+                if items:
+                    data[str(gid)] = items
+            
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving TTS state: {e}")
+
+    async def _auto_resume(self):
+        """ระบบมุดเข้าห้องเดิมมาพูดต่ออัตโนมัติ"""
         await self.bot.wait_until_ready()
+        await asyncio.sleep(5) # รอให้ Music ระบบอื่นเข้าห้องให้เสร็จก่อน
+
+        if not os.path.exists(self.state_file):
+            return
+
+        try:
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            
+            for gid_str, items in state.items():
+                guild_id = int(gid_str)
+                guild = self.bot.get_guild(guild_id)
+                if not guild: continue
+
+                # หาว่าควรเข้าช่องไหน (มุดตาม Music ไป หรือใช้ห้องเดิม)
+                vc = guild.voice_client
+                if not vc and items:
+                    # ถ้าบอทไม่ได้อยู่ในห้องเสียง แต่มีคิวค้าง ให้หาห้องที่มีสมาชิกอยู่ หรือห้องที่บอทควรมุดไป
+                    # (ในที่นี้เราจะรอดูสักพัก ถ้าบอทไม่มุดตามระบบเพลงไป เราจะยังไม่เริ่มพูดเพื่อประหยัดทรัพยากร)
+                    continue
+                
+                if vc and items:
+                    self.tts_queue[guild_id] = asyncio.Queue()
+                    for item in items:
+                        if os.path.exists(item[0]):
+                            await self.tts_queue[guild_id].put(item)
+                            self.active_filenames.add(item[0])
+                    
+                    if not self.is_playing.get(guild_id, False) and not self.tts_queue[guild_id].empty():
+                        await self._play_next(guild_id)
+                        
+        except Exception as e:
+            logger.error(f"Error in TTS auto-resume: {e}")
+
+    async def _initial_cleanup(self):
+        """ลบไฟล์ขยะที่ค้างจากการรันครั้งก่อน แบบฉลาดขึ้น"""
+        await self.bot.wait_until_ready()
+        await asyncio.sleep(10) # รอให้ auto_resume เซ็ต active_filenames ก่อน
         count = 0
         try:
             for file in os.listdir('.'):
                 if file.startswith('tts_temp_') and file.endswith('.mp3'):
-                    try:
-                        os.remove(file)
-                        count += 1
-                    except:
-                        pass
+                    if file not in self.active_filenames:
+                        try:
+                            os.remove(file)
+                            count += 1
+                        except: pass
             if count > 0:
                 logger.info(f"Cleanup finished: removed {count} old TTS temp files")
         except Exception as e:
@@ -64,6 +125,7 @@ class TTSCommand(commands.Cog):
     async def _play_next(self, guild_id):
         if guild_id not in self.tts_queue or self.tts_queue[guild_id].empty():
             self.is_playing[guild_id] = False
+            self._save_state()
             return
 
         self.is_playing[guild_id] = True
@@ -73,6 +135,7 @@ class TTSCommand(commands.Cog):
             return
 
         file_path, text = await self.tts_queue[guild_id].get()
+        self._save_state() # อัปเดตคิวหลังจากดึงออกมา
 
         def after_playing(error):
             if error:
@@ -114,26 +177,27 @@ class TTSCommand(commands.Cog):
     async def speak(self, interaction: discord.Interaction, text: str, ส่งไฟล์เสียง: bool = False):
         """รับข้อความเสียงและสร้าง TTS"""
         
-        # ตรวจสอบการเชื่อมต่อเสียง
-        if not interaction.user.voice:
-            return await interaction.response.send_message("❌ คุณต้องอยู่ในช่องเสียก่อนครับ", ephemeral=True)
+        # ตรวจสอบการเชื่อมต่อเสียง (ถ้าขอแค่ไฟล์เสียง ไม่ต้องอยู่ห้องเสียงก็ได้)
+        if not interaction.user.voice and not ส่งไฟล์เสียง:
+            return await interaction.response.send_message("❌ คุณต้องอยู่ในช่องเสียงก่อน หรือเลือกตั้งค่า `ส่งไฟล์เสียง` เป็น True เพื่อรับแค่ไฟล์ครับ", ephemeral=True)
 
-        user_channel = interaction.user.voice.channel
+        user_channel = interaction.user.voice.channel if interaction.user.voice else None
         guild = interaction.guild
 
         await interaction.response.defer()
 
-        # เชื่อมต่อช่องเสียง 
-        if not guild.voice_client:
-            try:
-                await user_channel.connect()
-            except Exception as e:
-                return await interaction.followup.send(f"❌ ไม่สามารถเชื่อมต่อกับช่องเสียงได้: {e}")
-        elif guild.voice_client.channel != user_channel:
-            try:
-                await guild.voice_client.move_to(user_channel)
-            except:
-                pass
+        # เชื่อมต่อช่องเสียง (เฉพาะกรณีที่คนพิมพ์อยู่ในห้องเสียง)
+        if user_channel:
+            if not guild.voice_client:
+                try:
+                    await user_channel.connect()
+                except Exception as e:
+                    return await interaction.followup.send(f"❌ ไม่สามารถเชื่อมต่อกับช่องเสียงได้: {e}")
+            elif guild.voice_client.channel != user_channel:
+                try:
+                    await guild.voice_client.move_to(user_channel)
+                except:
+                    pass
 
         try:
             # สร้างไฟล์ออดิโอแยกชิ้นเพื่อไม่ให้ชนกันเวลาใช้งานรัวๆ
@@ -145,12 +209,6 @@ class TTSCommand(commands.Cog):
                 tts.save(filename)
                 
             await self.bot.loop.run_in_executor(None, generate_tts)
-            
-            # จัดการ Queue
-            if guild.id not in self.tts_queue:
-                self.tts_queue[guild.id] = asyncio.Queue()
-                
-            await self.tts_queue[guild.id].put((filename, text))
             
             # ตอบกลับ
             if ส่งไฟล์เสียง:
@@ -164,18 +222,44 @@ class TTSCommand(commands.Cog):
             else:
                 await interaction.followup.send(f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}")
             
-            # ถ้าระบบไม่ได้เล่นอยู่ให้เริ่มเล่น
-            if not self.is_playing.get(guild.id, False):
-                if guild.voice_client and guild.voice_client.is_connected():
-                    if not guild.voice_client.is_playing():
-                        await self._play_next(guild.id)
-                else:
-                    self.is_playing[guild.id] = False
+            # ใช้งาน Queue และเล่นเสียงเฉพาะเมื่อแชนแนลมีอยู่จริง (อยู่ในห้องเสียง)
+            if user_channel:
+                if guild.id not in self.tts_queue:
+                    self.tts_queue[guild.id] = asyncio.Queue()
+                    
+                await self.tts_queue[guild.id].put((filename, text))
+                self._save_state() # จดคิวลงไฟล์ทันที
+                
+                # ถ้าระบบไม่ได้เล่นอยู่ให้เริ่มเล่น
+                if not self.is_playing.get(guild.id, False):
+                    # ให้โอกาสบอทเชื่อมต่อสำเร็จนิดนึง (กรณีเพิ่งกด Join)
+                    for _ in range(5):
+                        if guild.voice_client and guild.voice_client.is_connected():
+                            break
+                        await asyncio.sleep(1)
+
+                    if guild.voice_client and guild.voice_client.is_connected():
+                        if not guild.voice_client.is_playing():
+                            await self._play_next(guild.id)
+                        else:
+                            self.is_playing[guild.id] = True
+                    else:
+                        self.is_playing[guild.id] = False
+            else:
+                # ถ้าไม่ได้เข้าห้องเสียง แปลว่าสร้างมาเพื่อเอาไฟล์เฉยๆ สามารถลบไฟล์ต้นฉบับได้เลย
+                try:
+                    if os.path.exists(filename):
+                        os.remove(filename)
+                except:
+                    pass
                     
         except Exception as e:
-            import traceback
-            logger.error(f"Error generating TTS: {e}\n{traceback.format_exc()}")
-            await interaction.followup.send("❌ เกิดข้อผิดพลาดในการสร้างเสียงพูด กรุณาลองใหม่")
+            if not self.bot.is_closed():
+                import traceback
+                logger.error(f"Error generating TTS: {e}\n{traceback.format_exc()}")
+                try:
+                    await interaction.followup.send("❌ เกิดข้อผิดพลาดในการสร้างเสียงพูด กรุณาลองใหม่")
+                except: pass
 
     def _parse_message_reference(self, raw: str):
         value = raw.strip()

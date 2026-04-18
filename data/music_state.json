@@ -1,6 +1,6 @@
 {
     "1171254331643789332": {
-        "channel_id": 1388934775451942972,
+        "channel_id": 1279771519811190925,
         "current_track": null,
         "queue": [],
         "loop": "none",
@@ -14,6 +14,91 @@
         "text_channel_id": null,
         "auto_play": false,
         "is_afk": false,
+        "elapsed": 0
+    },
+    "1485283615343509648": {
+        "channel_id": 1485472564175310869,
+        "current_track": null,
+        "queue": [],
+        "loop": "none",
+        "shuffle": false,
+        "volume": 1.0,
+        "filters": {
+            "bassboost": false,
+            "nightcore": false,
+            "vaporwave": false
+        },
+        "text_channel_id": null,
+        "auto_play": false,
+        "is_afk": true,
+        "elapsed": 0
+    },
+    "1493430280826917049": {
+        "channel_id": 1493430282811084954,
+        "current_track": null,
+        "queue": [],
+        "loop": "none",
+        "shuffle": false,
+        "volume": 1.0,
+        "filters": {
+            "bassboost": false,
+            "nightcore": false,
+            "vaporwave": false
+        },
+        "text_channel_id": null,
+        "auto_play": false,
+        "is_afk": true,
+        "elapsed": 0
+    },
+    "1279349476410130433": {
+        "channel_id": 1359795202847408279,
+        "current_track": null,
+        "queue": [],
+        "loop": "none",
+        "shuffle": false,
+        "volume": 1.0,
+        "filters": {
+            "bassboost": false,
+            "nightcore": false,
+            "vaporwave": false
+        },
+        "text_channel_id": null,
+        "auto_play": false,
+        "is_afk": true,
+        "elapsed": 0
+    },
+    "1372138168207413338": {
+        "channel_id": 1374371328949358593,
+        "current_track": null,
+        "queue": [],
+        "loop": "none",
+        "shuffle": false,
+        "volume": 1.0,
+        "filters": {
+            "bassboost": false,
+            "nightcore": false,
+            "vaporwave": false
+        },
+        "text_channel_id": null,
+        "auto_play": false,
+        "is_afk": true,
+        "elapsed": 0
+    },
+    "1437026387990151170": {
+        "channel_id": 1455400824288313497,
+        "current_track": null,
+        "queue": [],
+        "loop": "none",
+        "shuffle": false,
+        "volume": 1.0,
+        "filters": {
+            "bassboost": false,
+            "nightcore": false,
+            "vaporwave": false
+        },
+        "text_channel_id": null,
+        "auto_play": false,
+        "is_afk": true,
         "elapsed": 0
     }
 }

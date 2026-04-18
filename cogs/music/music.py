@@ -524,9 +524,17 @@ class Music(commands.Cog):
                 # Check if already connected
                 vc = guild.voice_client
                 if not vc:
-                    # Connect to voice channel
-                    vc = await channel.connect()
-                    logger.info(f"[AutoResume] Reconnected to {channel.name} in {guild.name}")
+                    # Connect to voice channel with retry
+                    for attempt in range(3):
+                        try:
+                            vc = await channel.connect(timeout=20.0, reconnect=True)
+                            logger.info(f"[AutoResume] Reconnected to {channel.name} in {guild.name}")
+                            break
+                        except Exception as ce:
+                            logger.warning(f"[AutoResume] Connect attempt {attempt+1} failed: {ce}")
+                            if attempt == 2:
+                                raise ce
+                            await asyncio.sleep(2)
                 else:
                     logger.info(f"[AutoResume] Hijacking existing voice client in {guild.name}")
                 
@@ -599,12 +607,38 @@ class Music(commands.Cog):
         vc = guild.voice_client
         if not vc: return
 
-        # Follow logic
+        # Follow logic (Ask before follow)
         if before.channel != after.channel and after.channel and vc.channel == before.channel:
             if not [m for m in before.channel.members if not m.bot]:
-                if len([m for m in after.channel.members if not m.bot]) <= 1:
-                    await vc.move_to(after.channel)
-                    await self.save_voice_state(guild.id, after.channel.id)
+                class FollowView(discord.ui.View):
+                    def __init__(self, bot_vc, target_channel, music_cog, guild_id):
+                        super().__init__(timeout=120)
+                        self.bot_vc = bot_vc
+                        self.target_channel = target_channel
+                        self.music_cog = music_cog
+                        self.guild_id = guild_id
+
+                    @discord.ui.button(label="ลากบอทมาที่นี่", style=discord.ButtonStyle.green, emoji="🏃")
+                    async def follow_button(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                        if self.bot_vc and self.bot_vc.is_connected():
+                            await self.bot_vc.move_to(self.target_channel)
+                            await self.music_cog.save_voice_state(self.guild_id, self.target_channel.id)
+                            await btn_interaction.response.send_message(f"✅ บอทย้ายตามมาเล่นเพลงที่ {self.target_channel.mention} แล้ว!", ephemeral=False)
+                        else:
+                            await btn_interaction.response.send_message("❌ บอทไม่ได้อยู่ในระบบแล้ว", ephemeral=True)
+                        for child in self.children: child.disabled = True
+                        try:
+                            await btn_interaction.message.edit(view=self)
+                        except: pass
+
+                # ส่งคำถามไปที่ช่อง Text ภายใน Voice Channel ปัจจุบันที่ผู้ใช้ย้ายเข้าไป
+                try:
+                    await after.channel.send(
+                        f"👋 คุณ {member.mention} ย้ายห้อง... ทิ้งบอทไว้ห้องเดิม\nต้องการให้บอทย้ายตามมาเล่นเพลงต่อที่นี่ไหม?", 
+                        view=FollowView(vc, after.channel, self, guild.id)
+                    )
+                except Exception:
+                    pass
 
     def get_queue(self, guild_id: int) -> MusicQueue:
         if guild_id not in self.queues:

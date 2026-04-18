@@ -191,6 +191,7 @@ class AlphaBotBase:
         }
         self._console_task = None
         self._restart_requested = False
+        self._graceful_restart_requested = False
         self._stop_requested = False
 
     async def _runtime_app_command_check(self, interaction: discord.Interaction) -> bool:
@@ -202,6 +203,17 @@ class AlphaBotBase:
 
         if not cmd_name:
             return True
+
+        # ระบบป้องกันคำสั่งใหม่ระหว่างห้ามรีสตาร์ทแบบปลอดภัย
+        if self._graceful_restart_requested:
+            msg = "⚠️ **บอทกำลังเตรียมรีสตาร์ทแบบปลอดภัย**\nขณะนี้บอทหยุดรับคำสั่งใหม่เพื่อรอให้งานที่ค้างอยู่ประมวลผลเสร็จสิ้น โปรดลองใหม่ในอีกสักครู่ครับ"
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
+            except Exception: pass
+            return False
 
         normalized = str(cmd_name).strip().lower()
         try:
@@ -280,6 +292,7 @@ class AlphaBotBase:
                 "sy": "sync",
                 "gs": "guildsync",
                 "r": "restart", "rs": "restart",
+                "sr": "saferestart",
                 "s": "stop", "q": "stop", "x": "stop",
             }
             action = aliases.get(action, action)
@@ -295,12 +308,13 @@ class AlphaBotBase:
                     "  sync                - sync global commands\n"
                     "  guildsync           - sync guild commands (if guild id resolved)\n"
                     "  restart             - graceful restart process loop\n"
+                    "  saferestart (sr)    - wait for tasks to finish then restart\n"
                     "  stop                - graceful shutdown"
                 )
             elif action == "status":
                 logger.info(
                     f"Runtime status | ready={self.is_ready()} guilds={len(self.guilds)} "
-                    f"disabled={len(self.disabled_slash_commands)} stop={self._stop_requested} restart={self._restart_requested}"
+                    f"disabled={len(self.disabled_slash_commands)} stop={self._stop_requested} restart={self._restart_requested} sr_pending={self._graceful_restart_requested}"
                 )
             elif action == "disable":
                 if not arg:
@@ -347,6 +361,10 @@ class AlphaBotBase:
                 logger.warning("♻️ Restart requested from console...")
                 await self.close()
                 return
+            elif action == "saferestart":
+                self._graceful_restart_requested = True
+                logger.warning("🛡️ Safe Restart requested. Waiting for tasks to finish...")
+                asyncio.create_task(self._graceful_restart_monitor())
             elif action in {"stop", "shutdown", "quit", "exit"}:
                 self._stop_requested = True
                 logger.warning("🛑 Stop requested from console...")
@@ -354,6 +372,44 @@ class AlphaBotBase:
                 return
             else:
                 logger.warning(f"Unknown console command: {action} (type 'help')")
+
+    async def _is_bot_busy(self) -> bool:
+        """ตรวจสอบว่าบอทมีงานที่กำลังรันค้างอยู่หรือไม่"""
+        # 1. เช็คคิวงานหลัก (Vocal Separation ฯลฯ)
+        if hasattr(self, 'queue'):
+            pending = await self.queue.get_pending_tasks_count(['vocal_separation'])
+            if pending > 0: return True
+        
+        # 2. เช็ค Cog แยกเสียง
+        vsep = self.get_cog('VocalSeparator')
+        if vsep and hasattr(vsep, 'active_processes') and len(vsep.active_processes) > 0:
+            return True
+        
+        # 3. เช็คระบบพูดตาม (TTS)
+        tts = self.get_cog('TTSCommand')
+        if tts:
+            for guild_id in tts.tts_queue:
+                if not tts.tts_queue[guild_id].empty() or tts.is_playing.get(guild_id):
+                    return True
+        
+        return False
+
+    async def _graceful_restart_monitor(self):
+        """ลูปสำหรับเฝ้ารอจนงานเสร็จแล้วค่อยรีสตาร์ท"""
+        check_count = 0
+        while self._graceful_restart_requested:
+            busy = await self._is_bot_busy()
+            if not busy:
+                logger.warning("✅ All tasks finished. Performing Safe Restart now...")
+                self._restart_requested = True
+                await self.close()
+                break
+            
+            if check_count % 6 == 0: # ทุกๆ 1 นาที
+                logger.info("⏳ Safe Restart: Waiting for active tasks to complete...")
+            
+            check_count += 1
+            await asyncio.sleep(10)
 
     async def setup_hook(self):
         self._init_runtime_controls()
@@ -563,6 +619,19 @@ class AlphaBotBase:
         activity_name = f"{len(self.guilds)} servers"
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=activity_name))
 
+        # กวาด Sync คำสั่งไปยังกิลด์ทั้งหมดที่บอทอาศัยอยู่ แต่ยังไม่เคยถูก Sync ใน setup_hook
+        try:
+            copy_global = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "1").strip().lower() in {"1", "true", "yes", "on"}
+            if copy_global:
+                known = set(resolve_known_guild_ids())
+                for g in self.guilds:
+                    if g.id not in known:
+                        self.tree.copy_global_to(guild=g)
+                        cmds = await self.tree.sync(guild=g)
+                        logger.info(f"Guild tree dynamically synced to missed guild {g.name} ({g.id}) ({len(cmds)} commands)")
+        except Exception as e:
+            logger.error(f"Error dynamically syncing missed guilds: {e}")
+
         voice_id = os.getenv('AUTO_JOIN_VOICE_ID')
         if voice_id:
             try:
@@ -574,6 +643,17 @@ class AlphaBotBase:
                         logger.info(f"🔊 Auto-joined voice channel: {channel.name} ({voice_id})")
             except Exception as e:
                 logger.error(f"Failed to auto-join voice channel {voice_id}: {e}")
+
+    async def on_guild_join(self, guild):
+        logger.info(f"🤖 Bot joined a new server: {guild.name} (ID: {guild.id})")
+        try:
+            copy_global = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "1").strip().lower() in {"1", "true", "yes", "on"}
+            if copy_global:
+                self.tree.copy_global_to(guild=guild)
+                cmds = await self.tree.sync(guild=guild)
+                logger.info(f"✅ Immediately synced {len(cmds)} commands to new guild {guild.name}")
+        except Exception as e:
+            logger.error(f"⚠️ Could not sync commands for new guild: {e}")
 
     async def on_message(self, message):
         if message.author.bot:
