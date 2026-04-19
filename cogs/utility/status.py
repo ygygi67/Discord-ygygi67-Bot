@@ -35,10 +35,13 @@ class Status(commands.Cog):
     @tasks.loop(minutes=10)
     async def update_status_task(self):
         """Periodically update the status message"""
-        if not self.status_channel_id:
+        if not self.status_channel_id or getattr(self.bot, '_is_shutting_down', False):
             return
 
         await self.bot.wait_until_ready()
+        if getattr(self.bot, '_is_shutting_down', False):
+            return
+            
         channel = self.bot.get_channel(self.status_channel_id)
         if not channel:
             try:
@@ -77,6 +80,22 @@ class Status(commands.Cog):
         minutes, seconds = divmod(remainder, 60)
         uptime_str = f"{days}วัน {hours}ชม. {minutes}นาที"
 
+        # Network Status / Outage info
+        last_outage_str = "ไม่พบประวัติ"
+        try:
+            status_path = 'data/network_status.json'
+            if os.path.exists(status_path):
+                with open(status_path, 'r', encoding='utf-8') as f:
+                    n_data = json.load(f)
+                    last_outage = n_data.get("last_outage")
+                    if last_outage:
+                        try:
+                            dt = datetime.strptime(last_outage, '%Y-%m-%d %H:%M:%S')
+                            last_outage_str = f"<t:{int(dt.timestamp())}:R>"
+                        except:
+                            last_outage_str = last_outage
+        except: pass
+
         embed.add_field(
             name="🤖 ข้อมูลโปรเซส",
             value=f"**สถานะ:** `ออนไลน์ (เสถียร)`\n"
@@ -92,7 +111,7 @@ class Status(commands.Cog):
             name="💻 ทรัพยากรระบบ",
             value=f"**CPU Usage:** `{cpu}%`\n"
                   f"**RAM Usage:** `{ram}%`\n"
-                  f"**Platform:** `{platform.system()}`",
+                  f"**เน็ตหลุดล่าสุด:** {last_outage_str}",
             inline=True
         )
 

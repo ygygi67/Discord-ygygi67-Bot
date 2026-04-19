@@ -306,3 +306,6 @@ class AsyncSharedQueue:
     
     async def reset_interrupted_tasks(self):
         return await asyncio.to_thread(self.queue.reset_interrupted_tasks)
+
+    async def get_pending_count(self) -> int:
+        return await asyncio.to_thread(self.queue.get_pending_count)

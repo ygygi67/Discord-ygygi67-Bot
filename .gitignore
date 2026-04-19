@@ -157,3 +157,6 @@ nots
 # Runtime exports / temp outputs
 exports/
 follow_checker_log.txt
+
+# Data & Models
+data/

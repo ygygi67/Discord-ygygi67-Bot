@@ -30,6 +30,8 @@ COGS_DIR = os.path.join(BASE_DIR, 'cogs')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 CONSOLE_CONTROL_FILE = os.path.join(DATA_DIR, 'console_control.json')
+NETWORK_ERROR_FILE = os.path.join(DATA_DIR, 'network_error.flag')
+NETWORK_STATUS_FILE = os.path.join(DATA_DIR, 'network_status.json')
 
 if COGS_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -130,7 +132,7 @@ class DiscordLogHandler(logging.Handler):
         self.is_processing = False
 
     def emit(self, record):
-        if not self.bot.is_ready() or self.bot.is_closed():
+        if not self.bot.is_ready() or self.bot.is_closed() or getattr(self.bot, '_is_shutting_down', False):
             return
             
         msg = self.format(record)
@@ -193,6 +195,7 @@ class AlphaBotBase:
         self._restart_requested = False
         self._graceful_restart_requested = False
         self._stop_requested = False
+        self._is_shutting_down = False
 
     async def _runtime_app_command_check(self, interaction: discord.Interaction) -> bool:
         cmd_name = None
@@ -377,8 +380,14 @@ class AlphaBotBase:
         """ตรวจสอบว่าบอทมีงานที่กำลังรันค้างอยู่หรือไม่"""
         # 1. เช็คคิวงานหลัก (Vocal Separation ฯลฯ)
         if hasattr(self, 'queue'):
-            pending = await self.queue.get_pending_tasks_count(['vocal_separation'])
-            if pending > 0: return True
+            try:
+                pending = await self.queue.get_pending_count()
+                if pending > 0: return True
+                
+                # เช็คงานที่กำลังทำอยู่ (Processing)
+                vsep_active = await self.queue.get_active_count('vocal_separation')
+                if vsep_active > 0: return True
+            except: pass
         
         # 2. เช็ค Cog แยกเสียง
         vsep = self.get_cog('VocalSeparator')
@@ -388,10 +397,23 @@ class AlphaBotBase:
         # 3. เช็คระบบพูดตาม (TTS)
         tts = self.get_cog('TTSCommand')
         if tts:
-            for guild_id in tts.tts_queue:
-                if not tts.tts_queue[guild_id].empty() or tts.is_playing.get(guild_id):
-                    return True
+            if hasattr(tts, 'tts_queue'):
+                for guild_id in tts.tts_queue:
+                    if not tts.tts_queue[guild_id].empty() or tts.is_playing.get(guild_id):
+                        return True
         
+        # 4. เช็คระบบเพลง
+        music = self.get_cog('Music')
+        if music:
+            for vc in self.voice_clients:
+                if vc.is_playing() or vc.is_paused():
+                    return True
+
+        # 5. เช็คระบบ Youtube Spy
+        yt_spy = self.get_cog('YoutubeSpyCog')
+        if yt_spy and getattr(yt_spy, 'is_scanning', False):
+            return True
+            
         return False
 
     async def _graceful_restart_monitor(self):
@@ -605,6 +627,70 @@ class AlphaBotBase:
             logger.error(f"❌ Critical error in task {task.id}: {e}")
             await self.queue.complete_task(task.id, error=str(e))
 
+    async def _notify_network_recovery(self):
+        """แจ้งเตือนเมื่อเน็ตกลับมา หลังจากที่หลุดไปก่อนหน้า"""
+        try:
+            # พักสักนิดเพื่อให้ระบบอื่น (เช่น Status Cog) ทำงานเสร็จก่อน โดยเฉพาะการ Purge ห้อง
+            await asyncio.sleep(10)
+
+            # 1. อ่านไอดีห้องจาก channels.json
+            status_channel_id = None
+            channels_path = os.path.join(DATA_DIR, 'channels.json')
+            if os.path.exists(channels_path):
+                try:
+                    with open(channels_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        status_channel_id = data.get('status_channel')
+                except Exception: pass
+            
+            msg = "🔄 **Network Recovery Report**\nระบบทำการเชื่อมต่อเครือข่ายใหม่สำเร็จแล้ว ขณะนี้บอทกลับมาออนไลน์ตามปกติ รายละเอียดความเสถียรถูกบันทึกลงใน Dashboard เรียบร้อยครับ"
+            
+            # 2. ส่งลงห้อง Status
+            if status_channel_id:
+                try:
+                    channel = self.get_channel(status_channel_id) or await self.fetch_channel(status_channel_id)
+                    if channel:
+                        await channel.send(msg)
+                        logger.info(f"Sent network recovery notification to channel {status_channel_id}")
+                except Exception as e:
+                    logger.warning(f"Could not send recovery msg to status channel: {e}")
+
+            # 3. ส่ง DM หาเจ้าของบอท
+            try:
+                app_info = await self.application_info()
+                owners = []
+                if app_info.team:
+                    owners = [m.user for m in app_info.team.members]
+                else:
+                    owners = [app_info.owner]
+                
+                for owner in owners:
+                    try:
+                        await owner.send(msg)
+                        logger.info(f"Sent network recovery DM to {owner.name}")
+                    except Exception: pass
+            except Exception as e:
+                logger.warning(f"Could not fetch application info for recovery DM: {e}")
+
+            # 4. อัปเดตสถานะในไฟล์รวม
+            try:
+                status_data = {}
+                if os.path.exists(NETWORK_STATUS_FILE):
+                    with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
+                        status_data = json.load(f)
+                status_data["status"] = "online"
+                status_data["last_reconnect"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(status_data, f, indent=4)
+            except Exception: pass
+
+            # 5. ลบไฟล์ Flag ทิ้ง
+            if os.path.exists(NETWORK_ERROR_FILE):
+                os.remove(NETWORK_ERROR_FILE)
+                
+        except Exception as e:
+            logger.error(f"Error in _notify_network_recovery: {e}")
+
     async def _cleanup_loop(self):
         while True:
             await asyncio.sleep(3600)
@@ -616,6 +702,11 @@ class AlphaBotBase:
 
     async def on_ready(self):
         logger.info(f"✅ {self.mode.capitalize()} Ready! User: {self.user}")
+        
+        # ตรวจสอบการกู้คืนจากเน็ตหลุด
+        if os.path.exists(NETWORK_ERROR_FILE):
+             asyncio.create_task(self._notify_network_recovery())
+
         activity_name = f"{len(self.guilds)} servers"
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=activity_name))
 
@@ -676,6 +767,18 @@ class AlphaBot(AlphaBotBase, commands.Bot):
         self.start_time = datetime.now(timezone.utc)
         self.mode = 'standalone'
 
+    async def close(self):
+        self._is_shutting_down = True
+        logger.info("Closing bot gracefully...")
+        # Disconnect all voice clients explicitly before closing gateway
+        for vc in list(self.voice_clients):
+            try:
+                await vc.disconnect(force=True)
+            except Exception:
+                pass
+        await asyncio.sleep(0.5)
+        await super().close()
+
 class DistributedAlphaBot(AlphaBotBase, commands.AutoShardedBot):
     def __init__(self, **kwargs):
         intents = discord.Intents.all()
@@ -695,6 +798,18 @@ class DistributedAlphaBot(AlphaBotBase, commands.AutoShardedBot):
         super().__init__(command_prefix='!', intents=intents, application_id=APPLICATION_ID, **kwargs)
         self.start_time = datetime.now(timezone.utc)
         self.mode = dcfg.BOT_MODE
+
+    async def close(self):
+        self._is_shutting_down = True
+        logger.info("Closing autosharded bot gracefully...")
+        # Disconnect all voice clients explicitly before closing gateway
+        for vc in list(self.voice_clients):
+            try:
+                await vc.disconnect(force=True)
+            except Exception:
+                pass
+        await asyncio.sleep(0.5)
+        await super().close()
 
     async def on_shard_ready(self, shard_id):
         logger.info(f"🟢 Shard {shard_id} Ready")
@@ -732,6 +847,25 @@ def run_bot():
             except KeyboardInterrupt:
                 return
             except (discord.GatewayNotFound, discord.ConnectionClosed, OSError, ConnectionResetError, asyncio.TimeoutError) as e:
+                # สร้างไฟล์ Flag แสดงว่าหลุดเพราะเน็ต
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
+                        f.write(now_str)
+                    
+                    # บันทึกลงสถานะรวม
+                    status_data = {}
+                    if os.path.exists(NETWORK_STATUS_FILE):
+                        try:
+                            with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
+                                status_data = json.load(f)
+                        except Exception: pass
+                    status_data["last_outage"] = now_str
+                    status_data["status"] = "offline"
+                    with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(status_data, f, indent=4)
+                except Exception: pass
+                
                 delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
                 logger.warning(f"🌐 Network/Gateway error: {e}. Reconnecting in {delay}s")
                 await asyncio.sleep(delay)

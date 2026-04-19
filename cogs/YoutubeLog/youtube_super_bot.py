@@ -300,6 +300,7 @@ def is_notification_window() -> bool:
 class YoutubeSpyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.is_scanning = False
         self.spy_loop.start()
 
     def cog_unload(self):
@@ -307,78 +308,88 @@ class YoutubeSpyCog(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def spy_loop(self):
+        if self.is_scanning:
+            return
         await self.run_scan()
 
     async def run_scan(self, force_notify=False):
         # รันใน thread แยกเพื่อไม่ให้บล็อก bot หลัก
+        if self.is_scanning:
+            return
         return await asyncio.to_thread(self._do_scan, force_notify)
 
     def _do_scan(self, force_notify=False):
-        logger.info("🚀 Starting scan...")
-        status = load_bot_status()
-        is_first = status.get('IS_INITIALIZED') != 'TRUE'
-        in_window = is_notification_window() or force_notify
+        if self.is_scanning:
+            return
+        self.is_scanning = True
+        try:
+            logger.info("🚀 Starting scan...")
+            status = load_bot_status()
+            is_first = status.get('IS_INITIALIZED') != 'TRUE'
+            in_window = is_notification_window() or force_notify
 
-        if is_first:
-            status['IS_INITIALIZED'] = 'TRUE'
-            save_bot_status(status)
+            if is_first:
+                status['IS_INITIALIZED'] = 'TRUE'
+                save_bot_status(status)
 
-        current_snapshot = load_snapshot()
-        last_data = copy.deepcopy(current_snapshot)
-        sql_data = []
-        has_changes = False
+            current_snapshot = load_snapshot()
+            last_data = copy.deepcopy(current_snapshot)
+            sql_data = []
 
-        targets = [{'input': c, 'type': 'MY'} for c in MY_CHANNELS] + [{'input': c, 'type': 'SPY'} for c in SPY_CHANNELS]
-        
-        for idx, target in enumerate(targets, 1):
-            data = get_channel_data(target['input'])
-            if not data: continue
+            targets = [{'input': c, 'type': 'MY'} for c in MY_CHANNELS] + [{'input': c, 'type': 'SPY'} for c in SPY_CHANNELS]
             
-            ch_id = data['id']
-            is_my = target['type'] == 'MY'
-            sql_data.append({'id': ch_id, 'name': data['name'], 'subs': data['subs'], 'views': data['views'], 'vids': data['total_videos']})
+            for idx, target in enumerate(targets, 1):
+                data = get_channel_data(target['input'])
+                if not data: continue
+                
+                ch_id = data['id']
+                is_my = target['type'] == 'MY'
+                sql_data.append({'id': ch_id, 'name': data['name'], 'subs': data['subs'], 'views': data['views'], 'vids': data['total_videos']})
 
-            current_snapshot['channels'].setdefault(ch_id, {})
-            old_ch = last_data['channels'].get(ch_id, data)
-            
-            fields = []
-            # ตรวจสอบการเปลี่ยนชื่อ
-            if old_ch.get('name') and old_ch['name'] != data['name']:
-                fields.append({"name": "✏️ เปลี่ยนชื่อช่อง!", "value": f"> ❌ {old_ch['name']}\n> ✅ {data['name']}", "inline": False})
-            
-            # ตรวจสอบสถิติ
-            sub_diff = data['subs'] - old_ch.get('subs', 0)
-            view_diff = data['views'] - old_ch.get('views', 0)
-            if sub_diff != 0 or view_diff >= NOTIFY_SETTINGS['minChannelViewsDiff']:
-                fields.append({"name": "📊 สถิติ", "value": f"👥 ผู้ติดตาม: {data['subs']:,} ({f_diff(sub_diff)})\n👁️ วิวรวม: {data['views']:,} ({f_diff(view_diff)})", "inline": False})
+                current_snapshot['channels'].setdefault(ch_id, {})
+                old_ch = last_data['channels'].get(ch_id, data)
+                
+                fields = []
+                # ตรวจสอบการเปลี่ยนชื่อ
+                if old_ch.get('name') and old_ch['name'] != data['name']:
+                    fields.append({"name": "✏️ เปลี่ยนชื่อช่อง!", "value": f"> ❌ {old_ch['name']}\n> ✅ {data['name']}", "inline": False})
+                
+                # ตรวจสอบสถิติ
+                sub_diff = data['subs'] - old_ch.get('subs', 0)
+                view_diff = data['views'] - old_ch.get('views', 0)
+                if sub_diff != 0 or view_diff >= NOTIFY_SETTINGS['minChannelViewsDiff']:
+                    fields.append({"name": "📊 สถิติ", "value": f"👥 ผู้ติดตาม: {data['subs']:,} ({f_diff(sub_diff)})\n👁️ วิวรวม: {data['views']:,} ({f_diff(view_diff)})", "inline": False})
 
-            # ตรวจสอบคลิปใหม่
-            current_snapshot['latestUploads'].setdefault(ch_id, {})
-            old_uploads = current_snapshot['latestUploads'][ch_id]
-            current_uploads = {v['id']: v['title'] for v in data['videos']}
-            
-            new_vids = [f"> 🔗 [{t}](https://youtu.be/{i})" for i, t in current_uploads.items() if i not in old_uploads]
-            if new_vids:
-                fields.append({"name": "🎬 อัปโหลดใหม่!", "value": "\n".join(new_vids[:10]), "inline": False})
-            
-            current_snapshot['latestUploads'][ch_id].update(current_uploads)
-            current_snapshot['channels'][ch_id] = {'subs': data['subs'], 'views': data['views'], 'name': data['name'], 'vids': data['total_videos']}
+                # ตรวจสอบคลิปใหม่
+                current_snapshot['latestUploads'].setdefault(ch_id, {})
+                old_uploads = current_snapshot['latestUploads'][ch_id]
+                current_uploads = {v['id']: v['title'] for v in data['videos']}
+                
+                new_vids = [f"> 🔗 [{t}](https://youtu.be/{i})" for i, t in current_uploads.items() if i not in old_uploads]
+                if new_vids:
+                    fields.append({"name": "🎬 อัปโหลดใหม่!", "value": "\n".join(new_vids[:10]), "inline": False})
+                
+                current_snapshot['latestUploads'][ch_id].update(current_uploads)
+                current_snapshot['channels'][ch_id] = {'subs': data['subs'], 'views': data['views'], 'name': data['name'], 'vids': data['total_videos']}
 
-            if fields and in_window:
-                has_changes = True
-                report = {
-                    "author": {"name": data['name'], "url": data['url'], "icon_url": data['thumbnail']},
-                    "title": "🕵️ ข้อมูลสอดแนม" if not is_my else "🛡️ อัปเดตช่องของคุณ",
-                    "color": 15158332 if not is_my else 3447003,
-                    "fields": fields,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "footer": {"text": "YouTube Spy V9"}
-                }
-                send_advanced_discord(report)
+                if fields and in_window:
+                    report = {
+                        "author": {"name": data['name'], "url": data['url'], "icon_url": data['thumbnail']},
+                        "title": "🕵️ ข้อมูลสอดแนม" if not is_my else "🛡️ อัปเดตช่องของคุณ",
+                        "color": 15158332 if not is_my else 3447003,
+                        "fields": fields,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "footer": {"text": "YouTube Spy V9"}
+                    }
+                    send_advanced_discord(report)
 
-        save_snapshot(current_snapshot)
-        save_to_external_sql(sql_data)
-        logger.info("Scan completed.")
+            save_snapshot(current_snapshot)
+            save_to_external_sql(sql_data)
+        except Exception as e:
+            logger.error(f"Scan error: {e}")
+        finally:
+            self.is_scanning = False
+            logger.info("Scan completed.")
 
     @app_commands.command(name="youtube-spy", description="จัดการระบบสอดแนม YouTube")
     @app_commands.choices(action=[
