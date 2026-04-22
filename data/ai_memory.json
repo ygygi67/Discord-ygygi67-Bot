@@ -225,5 +225,23 @@
     "summary": "",
     "personality": "casual",
     "last_seen": "2026-03-31T08:29:16"
+  },
+  "1040181090993836032": {
+    "facts": {
+      "name": "CEL"
+    },
+    "history": [
+      {
+        "role": "user",
+        "msg": "FURRY :3"
+      },
+      {
+        "role": "bot",
+        "msg": ""
+      }
+    ],
+    "summary": "",
+    "personality": "casual",
+    "last_seen": "2026-04-20T05:52:46"
   }
 }

@@ -83,22 +83,5 @@
         "auto_play": false,
         "is_afk": true,
         "elapsed": 0
-    },
-    "1437026387990151170": {
-        "channel_id": 1455400824288313497,
-        "current_track": null,
-        "queue": [],
-        "loop": "none",
-        "shuffle": false,
-        "volume": 1.0,
-        "filters": {
-            "bassboost": false,
-            "nightcore": false,
-            "vaporwave": false
-        },
-        "text_channel_id": null,
-        "auto_play": false,
-        "is_afk": true,
-        "elapsed": 0
     }
 }

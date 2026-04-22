@@ -207,12 +207,22 @@ async def on_ready():
             print(f"⚠️ ช่อง ID {TARGET_STAGE_CHANNEL_ID} ไม่ใช่ Stage Channel", flush=True)
             return
 
-        if channel.guild.id in active_recordings:
-            print("⚠️ กำลังบันทึกอยู่ใน Guild นี้แล้ว", flush=True)
+        # ตรวจสอบว่าบอทเชื่อมต่ออยู่แล้วหรือไม่ และการเชื่อมต่อยังใช้งานได้จริงไหม
+        existing_vc = active_recordings.get(channel.guild.id)
+        if existing_vc and existing_vc.is_connected():
+            print("✅ บอทเชื่อมต่อและกำลังบันทึกอยู่ใน Guild นี้อยู่แล้ว", flush=True)
             return
+        
+        # ถ้ามี VC เก่าที่ค้างอยู่แต่ใช้ไม่ได้ ให้ลบทิ้งก่อน
+        if existing_vc:
+            print("⚠️ พบการเชื่อมต่อเดิมที่ค้างอยู่ กำลังรีเซ็ต...", flush=True)
+            try:
+                await existing_vc.disconnect(force=True)
+            except: pass
+            active_recordings.pop(channel.guild.id, None)
 
         print(f"⏳ กำลังเชื่อมต่อ Stage Channel: {channel.name} ...", flush=True)
-        vc: discord.VoiceClient = await channel.connect()
+        vc: discord.VoiceClient = await channel.connect(timeout=30.0, reconnect=True)
 
         # กลายเป็น Speaker อัตโนมัติ
         try:

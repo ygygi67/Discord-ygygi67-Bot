@@ -32,6 +32,7 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 CONSOLE_CONTROL_FILE = os.path.join(DATA_DIR, 'console_control.json')
 NETWORK_ERROR_FILE = os.path.join(DATA_DIR, 'network_error.flag')
 NETWORK_STATUS_FILE = os.path.join(DATA_DIR, 'network_status.json')
+ALIVE_FLAG = os.path.join(DATA_DIR, 'alive.flag')
 
 if COGS_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -630,10 +631,20 @@ class AlphaBotBase:
     async def _notify_network_recovery(self):
         """แจ้งเตือนเมื่อเน็ตกลับมา หลังจากที่หลุดไปก่อนหน้า"""
         try:
-            # พักสักนิดเพื่อให้ระบบอื่น (เช่น Status Cog) ทำงานเสร็จก่อน โดยเฉพาะการ Purge ห้อง
-            await asyncio.sleep(10)
+            # 0. บันทึกสถานะว่ากำลังออนไลน์
+            try:
+                status_data = {}
+                if os.path.exists(NETWORK_STATUS_FILE):
+                    with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
+                        status_data = json.load(f)
+                status_data["status"] = "online"
+                status_data["last_reconnect"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                status_data["recovery_pending"] = True
+                with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(status_data, f, indent=4)
+            except Exception: pass
 
-            # 1. อ่านไอดีห้องจาก channels.json
+            await asyncio.sleep(8)
             status_channel_id = None
             channels_path = os.path.join(DATA_DIR, 'channels.json')
             if os.path.exists(channels_path):
@@ -644,52 +655,80 @@ class AlphaBotBase:
                 except Exception: pass
             
             msg = "🔄 **Network Recovery Report**\nระบบทำการเชื่อมต่อเครือข่ายใหม่สำเร็จแล้ว ขณะนี้บอทกลับมาออนไลน์ตามปกติ รายละเอียดความเสถียรถูกบันทึกลงใน Dashboard เรียบร้อยครับ"
-            
-            # 2. ส่งลงห้อง Status
             if status_channel_id:
                 try:
                     channel = self.get_channel(status_channel_id) or await self.fetch_channel(status_channel_id)
                     if channel:
                         await channel.send(msg)
-                        logger.info(f"Sent network recovery notification to channel {status_channel_id}")
-                except Exception as e:
-                    logger.warning(f"Could not send recovery msg to status channel: {e}")
+                        status_cog = self.get_cog('Status')
+                        if status_cog and hasattr(status_cog, 'update_status_task'):
+                            await asyncio.sleep(2)
+                            asyncio.create_task(status_cog.update_status_task())
+                except Exception: pass
 
-            # 3. ส่ง DM หาเจ้าของบอท
-            try:
-                app_info = await self.application_info()
-                owners = []
-                if app_info.team:
-                    owners = [m.user for m in app_info.team.members]
-                else:
-                    owners = [app_info.owner]
-                
-                for owner in owners:
-                    try:
-                        await owner.send(msg)
-                        logger.info(f"Sent network recovery DM to {owner.name}")
-                    except Exception: pass
-            except Exception as e:
-                logger.warning(f"Could not fetch application info for recovery DM: {e}")
-
-            # 4. อัปเดตสถานะในไฟล์รวม
-            try:
-                status_data = {}
-                if os.path.exists(NETWORK_STATUS_FILE):
-                    with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
-                        status_data = json.load(f)
-                status_data["status"] = "online"
-                status_data["last_reconnect"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(status_data, f, indent=4)
-            except Exception: pass
-
-            # 5. ลบไฟล์ Flag ทิ้ง
+            # ลบไฟล์ Flag
             if os.path.exists(NETWORK_ERROR_FILE):
                 os.remove(NETWORK_ERROR_FILE)
                 
         except Exception as e:
             logger.error(f"Error in _notify_network_recovery: {e}")
+
+    async def _handle_unexpected_restart(self):
+        """จัดการเมื่อตรวจพบว่าบอทเปิดใหม่หลังจากการปิดตัวแบบไม่ปกติ (เช่น คอมดับ/โดนขโมย)"""
+        try:
+            import aiohttp
+            ip_info = {}
+            async with aiohttp.ClientSession() as session:
+                async with session.get('http://ip-api.com/json/') as resp:
+                    if resp.status == 200:
+                        ip_info = await resp.json()
+            
+            # บันทึกลงสถานะว่าเกิดเหตุการณ์ไม่ปกติ (เพื่อแสดงใน Dashboard แบบไม่ระบุรายละเอียดส่วนตัว)
+            try:
+                status_data = {}
+                if os.path.exists(NETWORK_STATUS_FILE):
+                    with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
+                        status_data = json.load(f)
+                status_data["unexpected_event"] = True
+                status_data["last_event_time"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(status_data, f, indent=4)
+            except Exception: pass
+
+            # ส่ง DM แจ้งเตือนเจ้าของบอท (Security Report)
+            try:
+                app_info = await self.application_info()
+                owner = app_info.owner
+                
+                ip = ip_info.get("query", "Unknown")
+                city = ip_info.get("city", "Unknown")
+                country = ip_info.get("country", "Unknown")
+                isp = ip_info.get("isp", "Unknown")
+                lat = ip_info.get("lat")
+                lon = ip_info.get("lon")
+                maps_url = f"https://www.google.com/maps?q={lat},{lon}" if lat and lon else "N/A"
+
+                embed = discord.Embed(
+                    title="⚠️ บันทึกการฟื้นฟูระบบฉุกเฉิน (Security Report)",
+                    description="บอทตรวจพบว่าเพิ่งเปิดใช้งานหลังจากมีการปิดตัวลงอย่างไม่ปกติ ระบบได้บันทึกที่อยู่ IP และพิกัดปัจจุบันไว้เพื่อความปลอดภัย",
+                    color=discord.Color.red(),
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="🌐 Public IP", value=f"`{ip}`", inline=True)
+                embed.add_field(name="🏢 ISP", value=f"`{isp}`", inline=True)
+                embed.add_field(name="📍 ที่อยู่", value=f"`{city}, {country}`", inline=False)
+                if maps_url != "N/A":
+                    embed.add_field(name="🗺️ แผนที่พิกัดปัจจุบัน", value=f"[คลิกเพื่อดูใน Google Maps]({maps_url})", inline=False)
+                
+                embed.set_footer(text="ข้อมูลนี้จะส่งให้คุณคนเดียวเท่านั้น ไม่ปรากฏใน Dashboard สาธารณะ")
+                await owner.send(embed=embed)
+                logger.info(f"Sent security restart report to owner {owner.name}")
+            except Exception as e:
+                logger.error(f"Failed to send security report: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error in _handle_unexpected_restart: {e}")
+
 
     async def _cleanup_loop(self):
         while True:
@@ -703,12 +742,29 @@ class AlphaBotBase:
     async def on_ready(self):
         logger.info(f"✅ {self.mode.capitalize()} Ready! User: {self.user}")
         
-        # ตรวจสอบการกู้คืนจากเน็ตหลุด
+        # 1. ตรวจสอบสถานะการปิดตัวล่าสุด
+        # ถ้ามี ALIVE_FLAG ค้างอยู่ แสดงว่าไม่ได้ปิดแบบปกติ (Unexpected Shutdown)
+        if os.path.exists(ALIVE_FLAG):
+            asyncio.create_task(self._handle_unexpected_restart())
+        
+        # สร้าง ALIVE_FLAG ใหม่เพื่อบอกว่าตอนนี้บอทกำลังรันอยู่
+        try:
+            with open(ALIVE_FLAG, 'w', encoding='utf-8') as f:
+                f.write(f"PID: {os.getpid()} | START: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception: pass
+
+        # 2. ตรวจสอบการกู้คืนจากเน็ตหลุด
         if os.path.exists(NETWORK_ERROR_FILE):
              asyncio.create_task(self._notify_network_recovery())
+             
+             # คืนค่าเสียง
+             music_cog = self.get_cog('Music')
+             if music_cog and hasattr(music_cog, 'auto_resume_on_load'):
+                 asyncio.create_task(music_cog.auto_resume_on_load())
 
         activity_name = f"{len(self.guilds)} servers"
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=activity_name))
+
 
         # กวาด Sync คำสั่งไปยังกิลด์ทั้งหมดที่บอทอาศัยอยู่ แต่ยังไม่เคยถูก Sync ใน setup_hook
         try:
@@ -752,7 +808,15 @@ class AlphaBotBase:
         await self.process_commands(message)
 
     async def on_disconnect(self):
-        logger.warning("🔌 Discord gateway disconnected. Waiting for reconnect...")
+        logger.warning("🔌 Discord gateway disconnected. (Potential Network Outage)")
+        # สร้าง Flag ไว้เพื่อแจ้งเตือนตอน Reconnect
+        try:
+            if not os.path.exists(NETWORK_ERROR_FILE):
+                with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
+                    f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                logger.info(f"Saved network error flag to: {NETWORK_ERROR_FILE}")
+        except Exception as e:
+            logger.error(f"Could not save network error flag: {e}")
 
     async def on_resumed(self):
         logger.info("♻️ Discord gateway session resumed successfully")
@@ -770,7 +834,32 @@ class AlphaBot(AlphaBotBase, commands.Bot):
     async def close(self):
         self._is_shutting_down = True
         logger.info("Closing bot gracefully...")
-        # Disconnect all voice clients explicitly before closing gateway
+
+        # ส่งสถานะปิดบอทลง Status Channel ก่อนปิดการเชื่อมต่อ
+        try:
+            status_cog = self.get_cog('Status')
+            if status_cog and hasattr(status_cog, 'status_channel_id') and status_cog.status_channel_id:
+                channel = self.get_channel(status_cog.status_channel_id) or await self.fetch_channel(status_cog.status_channel_id)
+                if channel:
+                    await channel.purge(limit=10)
+                    embed = discord.Embed(
+                        title="🔴 ระบบหยุดการทำงาน | System Closed",
+                        description="บอทถูกปิดการใช้งานชั่วคราว (Graceful Shutdown) เพื่อการบำรุงรักษาหรือรีสตาร์ท",
+                        color=0xe74c3c,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed.set_footer(text="รอการเปิดใช้งานครั้งถัดไป...")
+                    await channel.send(embed=embed)
+                    logger.info("Sent offline status to status channel")
+        except Exception as e:
+            logger.warning(f"Could not send offline status: {e}")
+
+        # ลบ Flag ว่ากำลังทำงานอยู่ (เพราะปิดแบบปกติ)
+        if os.path.exists(ALIVE_FLAG):
+            try: os.remove(ALIVE_FLAG)
+            except: pass
+
+        # Disconnect all voice clients explicitly
         for vc in list(self.voice_clients):
             try:
                 await vc.disconnect(force=True)

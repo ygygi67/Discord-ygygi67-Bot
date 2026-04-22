@@ -82,23 +82,43 @@ class Status(commands.Cog):
 
         # Network Status / Outage info
         last_outage_str = "ไม่พบประวัติ"
+        is_recovering = False
+        unexpected_event = False
         try:
             status_path = 'data/network_status.json'
             if os.path.exists(status_path):
                 with open(status_path, 'r', encoding='utf-8') as f:
                     n_data = json.load(f)
                     last_outage = n_data.get("last_outage")
+                    is_recovering = n_data.get("recovery_pending", False)
+                    unexpected_event = n_data.get("unexpected_event", False)
                     if last_outage:
                         try:
                             dt = datetime.strptime(last_outage, '%Y-%m-%d %H:%M:%S')
                             last_outage_str = f"<t:{int(dt.timestamp())}:R>"
                         except:
                             last_outage_str = last_outage
+                
+                # ถ้ากำลังประมวลผลการฟื้นฟู ให้ติ๊กออกหลังจากอ่านแล้ว
+                needs_save = False
+                if is_recovering:
+                    n_data["recovery_pending"] = False
+                    needs_save = True
+                if unexpected_event:
+                    n_data["unexpected_event"] = False
+                    needs_save = True
+                
+                if needs_save:
+                    with open(status_path, 'w', encoding='utf-8') as f:
+                        json.dump(n_data, f, indent=4)
         except: pass
+
+        status_emoji = "🟢" if not is_recovering else "🟡"
+        status_text = "ออนไลน์ (เสถียร)" if not is_recovering else "กำลังฟื้นฟูระบบ..."
 
         embed.add_field(
             name="🤖 ข้อมูลโปรเซส",
-            value=f"**สถานะ:** `ออนไลน์ (เสถียร)`\n"
+            value=f"**สถานะ:** `{status_emoji} {status_text}`\n"
                   f"**ความหน่วง:** `{round(self.bot.latency * 1000)}ms`\n"
                   f"**Uptime:** `{uptime_str}`",
             inline=True
@@ -114,6 +134,15 @@ class Status(commands.Cog):
                   f"**เน็ตหลุดล่าสุด:** {last_outage_str}",
             inline=True
         )
+
+        if unexpected_event:
+            embed.set_author(name="🚨 ตรวจพบการหยุดทำงานที่ไม่ปกติในครั้งล่าสุด", icon_url="https://i.imgur.com/vL95W1L.png")
+            embed.color = 0xff4757 # Bright red for security event
+        elif is_recovering:
+            embed.set_author(name="🛡️ ระบบเพิ่งฟื้นฟูจากสภาวะเครือข่ายขัดข้อง", icon_url="https://i.imgur.com/8N8uE6A.png")
+            embed.color = 0xf1c40f # Yellow for recovery status
+        else:
+            embed.color = 0x2b2d31 # Normal midnight theme
 
         # Metadata
         total_members = sum(guild.member_count for guild in self.bot.guilds)

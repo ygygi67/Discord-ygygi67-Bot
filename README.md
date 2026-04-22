@@ -143,6 +143,11 @@
 - ✅ ระบบ **Graceful Subprocess Shutdown**:
   - เพิ่มการติดตาม Process (yt-dlp/AI) เพื่อสั่งปิดงานให้สะอาดเมื่อบอทหยุดทำงาน 
   - ป้องกันปัญหา `Event loop is closed` และลดการกินทรัพยากรค้างคาวบน Windows
+- ✅ **Network Recovery & Auto-Voice**: ระบบแจ้งเตือนเมื่อเน็ตกลับมาออนไลน์ และมุดกลับเข้าห้องเสียงเดิมอัตโนมัติเพื่อให้การฟังเพลงไม่สะดุด
+- ✅ **Advanced Dashboard Status**: ปรับปรุงหน้า Dashboard ให้แสดงสถานะการกู้คืน (Yellow) และแสดงแจ้งเตือนเหตุการณ์พยายามเข้าถึงระบบแบบไม่ปกติ (Red Alert) 
+- ✅ **Security & Theft Protection**: ระบบส่งพิกัด IP และที่อยู่ปัจจุบันพร้อม Google Maps เข้า DM เจ้าของบอททันทีหากตรวจพบการย้ายเครื่องหรือคอมดับแล้วเปิดใหม่ (กันโดนขโมยคอม)
+- ✅ **Graceful Shutdown Status**: ส่ง Embed "System Closed" แจ้งเตือนสมาชิกเมื่อมีการปิดบอทเพื่อบำรุงรักษาผ่านคำสั่งปกติ
+- ✅ **VoiceLoggerBot Stability**: เพิ่มความเสถียรในการ Reconnect เข้าห้อง Stage อัตโนมัติของบอทเลขาเมื่อเน็ตหลุด
 - ✅ แก้ไขจุดบกพร่อง (Bug Fixes):
   - ปรับชื่อเรียก Model ID ให้ตรงตามมาตรฐาน `audio-separator v0.44+` 
   - แก้ไขปัญหาโมเดลหาไม่พบ (ValueError: Model file not found)
