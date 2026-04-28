@@ -231,6 +231,14 @@ class AlphaBotBase:
         
         async def safe_disconnect(vc):
             try:
+                # Persist music playback position before disconnect (supports resume mid-song)
+                try:
+                    music = self.get_cog("Music")
+                    if music and getattr(vc, "channel", None):
+                        await music.save_voice_state(vc.guild.id, vc.channel.id)
+                except Exception:
+                    pass
+
                 # Use wait_for to prevent hanging forever on a single VC
                 # On Windows, force=True is important
                 await asyncio.wait_for(vc.disconnect(force=True), timeout=4.0)

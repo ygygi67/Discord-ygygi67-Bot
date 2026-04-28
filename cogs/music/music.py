@@ -559,6 +559,13 @@ class Music(commands.Cog):
                     
                     if isinstance(state, dict):
                         queue = self.get_queue(guild.id)
+                        # Reset in-memory queue to avoid duplicate restoration if this runs more than once
+                        queue.tracks.clear()
+                        queue.history.clear()
+                        queue.current_track = None
+                        queue.start_time = 0
+                        queue.paused_at = 0
+                        queue.total_paused = 0
                         
                         # Restore queue settings
                         queue.loop_mode = state.get('loop', 'none')
@@ -587,6 +594,25 @@ class Music(commands.Cog):
                                 
                                 # Calculate resume position
                                 elapsed = state.get('elapsed', 0)
+                                duration = current_track.duration or curr_data.get('duration', 0) or 0
+
+                                # If the saved position is at/after the end, do not replay the finished track
+                                if duration > 0 and elapsed >= max(0, duration - 2):
+                                    logger.info(f"[AutoResume] Skipping finished track: {current_track.title} (elapsed={elapsed:.1f}s duration={duration}s)")
+                                    queue.current_track = None
+                                    queue.start_time = 0
+                                    queue.total_paused = 0
+                                    queue.paused_at = 0
+                                    await self.save_voice_state(guild.id, channel.id)
+
+                                    # Continue with next track in queue if any
+                                    if queue.tracks and not vc.is_playing():
+                                        next_track = queue.get_next()
+                                        if next_track:
+                                            await self.play_track(vc, next_track)
+                                            logger.info(f"[AutoResume] Started next track after finished one: {next_track.title}")
+                                    continue
+
                                 if elapsed > 5:  # Resume from 5 seconds before to avoid missing anything
                                     resume_pos = max(0, elapsed - 5)
                                 else:
@@ -842,7 +868,21 @@ class Music(commands.Cog):
             if channel:
                 await self.send_now_playing(channel, next_t)
         elif vc:
-            if queue.is_afk: return
+            # Queue ended: clear current track so restart won't replay an already-finished song
+            if queue.current_track:
+                try:
+                    if not queue.history or queue.history[-1].url != queue.current_track.url:
+                        queue.history.append(queue.current_track)
+                except Exception:
+                    queue.history.append(queue.current_track)
+            queue.current_track = None
+            queue.start_time = 0
+            queue.total_paused = 0
+            queue.paused_at = 0
+            await self.save_voice_state(guild.id, vc.channel.id)
+
+            if queue.is_afk:
+                return
             await asyncio.sleep(300)
             if vc and not vc.is_playing() and not [m for m in vc.channel.members if not m.bot]:
                 await vc.disconnect()
