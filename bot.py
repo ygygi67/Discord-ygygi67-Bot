@@ -398,6 +398,7 @@ class AlphaBotBase:
                     "Console commands:\n"
                     "  help                - show this help\n"
                     "  status              - show bot runtime status\n"
+                    "  busy                - show why safe-restart is waiting\n"
                     "  disable <cmd>       - disable slash command by name (without /)\n"
                     "  enable <cmd>        - re-enable slash command\n"
                     "  list                - list disabled slash commands\n"
@@ -412,6 +413,15 @@ class AlphaBotBase:
                     f"Runtime status | ready={self.is_ready()} guilds={len(self.guilds)} "
                     f"disabled={len(self.disabled_slash_commands)} stop={self._stop_requested} restart={self._restart_requested} sr_pending={self._graceful_restart_requested}"
                 )
+            elif action in {"busy", "why"}:
+                try:
+                    reasons = await self._get_busy_reasons()
+                    if reasons:
+                        logger.info("Busy reasons:\n  - " + "\n  - ".join(reasons))
+                    else:
+                        logger.info("Busy reasons: (none) - bot looks idle")
+                except Exception as e:
+                    logger.warning(f"Failed to compute busy reasons: {e}")
             elif action == "disable":
                 if not arg:
                     logger.warning("Usage: disable <command_name> | shorthand: d <command_name> (เช่น: d โหลดคลิป)")
@@ -469,45 +479,80 @@ class AlphaBotBase:
             else:
                 logger.warning(f"Unknown console command: {action} (type 'help')")
 
-    async def _is_bot_busy(self) -> bool:
-        """ตรวจสอบว่าบอทมีงานที่กำลังรันค้างอยู่หรือไม่"""
-        # 1. เช็คคิวงานหลัก (Vocal Separation ฯลฯ)
+    async def _get_busy_reasons(self) -> list[str]:
+        """Return human-readable reasons for why safe-restart is waiting."""
+        reasons: list[str] = []
+
+        # 1) Shared queue (vocal separation etc.)
         if hasattr(self, 'queue'):
             try:
                 pending = await self.queue.get_pending_count()
-                if pending > 0: return True
-                
-                # เช็คงานที่กำลังทำอยู่ (Processing)
-                vsep_active = await self.queue.get_active_count('vocal_separation')
-                if vsep_active > 0: return True
-            except: pass
-        
-        # 2. เช็ค Cog แยกเสียง
-        vsep = self.get_cog('VocalSeparator')
-        if vsep and hasattr(vsep, 'active_processes') and len(vsep.active_processes) > 0:
-            return True
-        
-        # 3. เช็คระบบพูดตาม (TTS)
-        tts = self.get_cog('TTSCommand')
-        if tts:
-            if hasattr(tts, 'tts_queue'):
-                for guild_id in tts.tts_queue:
-                    if not tts.tts_queue[guild_id].empty() or tts.is_playing.get(guild_id):
-                        return True
-        
-        # 4. เช็คระบบเพลง
-        music = self.get_cog('Music')
-        if music:
-            for vc in self.voice_clients:
-                if vc.is_playing() or vc.is_paused():
-                    return True
+                if pending > 0:
+                    reasons.append(f"Shared queue pending: {pending}")
 
-        # 5. เช็คระบบ Youtube Spy
-        yt_spy = self.get_cog('YoutubeSpyCog')
-        if yt_spy and getattr(yt_spy, 'is_scanning', False):
-            return True
-            
-        return False
+                vsep_active = await self.queue.get_active_count('vocal_separation')
+                if vsep_active > 0:
+                    reasons.append(f"Shared queue active vocal_separation: {vsep_active}")
+            except Exception:
+                pass
+
+        # 2) VocalSeparator processes
+        try:
+            vsep = self.get_cog('VocalSeparator')
+            if vsep and hasattr(vsep, 'active_processes'):
+                procs = list(getattr(vsep, 'active_processes') or [])
+                if len(procs) > 0:
+                    reasons.append(f"VocalSeparator active processes: {len(procs)}")
+        except Exception:
+            pass
+
+        # 3) TTS queue / playback
+        try:
+            tts = self.get_cog('TTSCommand')
+            if tts and hasattr(tts, 'tts_queue'):
+                q = getattr(tts, 'tts_queue') or {}
+                for guild_id, guild_q in q.items():
+                    try:
+                        is_playing = bool(getattr(tts, 'is_playing', {}).get(guild_id))
+                        if is_playing:
+                            reasons.append(f"TTS playing in guild {guild_id}")
+                        if hasattr(guild_q, "qsize") and guild_q.qsize() > 0:
+                            reasons.append(f"TTS queue in guild {guild_id}: {guild_q.qsize()} pending")
+                        elif hasattr(guild_q, "empty") and not guild_q.empty():
+                            reasons.append(f"TTS queue in guild {guild_id}: not empty")
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        # 4) Music voice clients
+        try:
+            if self.get_cog('Music'):
+                for vc in list(self.voice_clients):
+                    try:
+                        if vc.is_playing() or vc.is_paused():
+                            reasons.append(f"Music active in guild {getattr(vc.guild, 'id', 'unknown')}")
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        # 5) YouTube Spy scanning
+        try:
+            yt_spy = self.get_cog('YoutubeSpyCog')
+            if yt_spy and getattr(yt_spy, 'is_scanning', False):
+                reasons.append("YoutubeSpy scanning in progress")
+        except Exception:
+            pass
+
+        return reasons
+
+    async def _is_bot_busy(self) -> bool:
+        """ตรวจสอบว่าบอทมีงานที่กำลังรันค้างอยู่หรือไม่"""
+        try:
+            return len(await self._get_busy_reasons()) > 0
+        except Exception:
+            return False
 
     async def _graceful_restart_monitor(self):
         """ลูปสำหรับเฝ้ารอจนงานเสร็จแล้วค่อยรีสตาร์ท"""
@@ -521,7 +566,14 @@ class AlphaBotBase:
                 break
             
             if check_count % 6 == 0: # ทุกๆ 1 นาที
-                logger.info("⏳ Safe Restart: Waiting for active tasks to complete...")
+                try:
+                    reasons = await self._get_busy_reasons()
+                    if reasons:
+                        logger.info("⏳ Safe Restart: Waiting for active tasks to complete...\n  - " + "\n  - ".join(reasons))
+                    else:
+                        logger.info("⏳ Safe Restart: Waiting for active tasks to complete...")
+                except Exception:
+                    logger.info("⏳ Safe Restart: Waiting for active tasks to complete...")
             
             check_count += 1
             await asyncio.sleep(10)
