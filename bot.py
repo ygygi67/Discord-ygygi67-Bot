@@ -267,11 +267,22 @@ class AlphaBotBase:
                 except: pass
             self.active_processes.clear()
 
-        # 3. Cancel all remaining tasks
+        # 3. Cancel remaining tasks (avoid cancelling the watchdog/supervisor task)
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         if not tasks: return
-        
+
+        def _is_watchdog_task(t: asyncio.Task) -> bool:
+            try:
+                coro = t.get_coro()
+                name = getattr(coro, "__name__", "") or ""
+                qualname = getattr(coro, "__qualname__", "") or ""
+                return ("run_with_watchdog" in name) or ("run_with_watchdog" in qualname)
+            except Exception:
+                return False
+
         for task in tasks:
+            if _is_watchdog_task(task):
+                continue
             task.cancel()
             
         try:
@@ -1001,6 +1012,23 @@ def run_bot():
 
             except KeyboardInterrupt:
                 return
+            except asyncio.CancelledError:
+                # On Python 3.13+, CancelledError inherits BaseException and can bubble out during close().
+                # Treat cancellation as a normal control-flow event for stop/restart.
+                try:
+                    t = asyncio.current_task()
+                    if t is not None:
+                        t.uncancel()
+                except Exception:
+                    pass
+
+                if bot and getattr(bot, "_stop_requested", False):
+                    return
+                if bot and getattr(bot, "_restart_requested", False):
+                    attempt = 0
+                    await asyncio.sleep(1.0)
+                    continue
+                return
             except (discord.GatewayNotFound, discord.ConnectionClosed, OSError, ConnectionResetError, asyncio.TimeoutError, Exception) as e:
                 # ตรวจสอบว่าเป็น Exception ที่ต้องการข้ามหรือไม่ (เช่น KeyboardInterrupt ถูกดักไปแล้ว)
                 if isinstance(e, KeyboardInterrupt): return
@@ -1049,6 +1077,9 @@ def run_bot():
     try:
         asyncio.run(run_with_watchdog())
     except KeyboardInterrupt:
+        pass
+    except asyncio.CancelledError:
+        # Prevent noisy stack traces if a shutdown triggers a cancellation at the runner level.
         pass
 
 if __name__ == "__main__":
