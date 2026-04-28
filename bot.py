@@ -491,6 +491,14 @@ class AlphaBotBase:
                 if pending > 0:
                     reasons.append(f"Shared queue pending: {pending}")
 
+                    # Include a small sample of pending tasks to show what's blocking restart
+                    try:
+                        sample = await self.queue.list_tasks(status='pending', limit=3)
+                        for t in sample:
+                            reasons.append(f"Pending task: id={t.id} type={t.type} created_at={t.created_at}")
+                    except Exception:
+                        pass
+
                 vsep_active = await self.queue.get_active_count('vocal_separation')
                 if vsep_active > 0:
                     reasons.append(f"Shared queue active vocal_separation: {vsep_active}")

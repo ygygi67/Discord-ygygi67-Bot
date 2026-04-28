@@ -192,6 +192,19 @@ class SharedQueue:
         except:
             return 0
 
+    def list_tasks(self, status: str = 'pending', limit: int = 10) -> List[Task]:
+        """List tasks by status (for diagnostics)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT * FROM tasks WHERE status = ? ORDER BY priority ASC, created_at ASC LIMIT ?",
+                    (status, int(limit)),
+                )
+                rows = cursor.fetchall()
+                return [self._row_to_task(r) for r in rows]
+        except Exception:
+            return []
+
     def get_queue_position(self, task_id: str, task_type: str) -> int:
         """หาตำแหน่งคิวของ Task นี้ (นับเฉพาะที่ยังไม่เริ่มทำ)"""
         try:
@@ -309,3 +322,6 @@ class AsyncSharedQueue:
 
     async def get_pending_count(self) -> int:
         return await asyncio.to_thread(self.queue.get_pending_count)
+
+    async def list_tasks(self, status: str = 'pending', limit: int = 10) -> List[Task]:
+        return await asyncio.to_thread(self.queue.list_tasks, status, limit)
