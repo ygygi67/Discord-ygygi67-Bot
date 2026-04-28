@@ -389,6 +389,7 @@ class AlphaBotBase:
                 "gs": "guildsync",
                 "r": "restart", "rs": "restart",
                 "sr": "saferestart",
+                "w": "busy",
                 "s": "stop", "q": "stop", "x": "stop",
             }
             action = aliases.get(action, action)
