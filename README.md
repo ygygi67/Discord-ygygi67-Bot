@@ -61,6 +61,7 @@
 ## 🆕 อัปเดตล่าสุด
 
 - ✅ **อัปเดต: Safe Restart Diagnostics (2026-04-28)** — แก้ปัญหาใช้ `r`/`sr` แล้วไม่รีสตาร์ทบน Python 3.13 จาก `asyncio.CancelledError` หลุดออกจาก watchdog พร้อมเพิ่มคำสั่งคอนโซล `busy`/`why` และ log “busy reasons” เพื่อบอกชัดเจนว่า Safe Restart กำลังรออะไร (เพลง/TTS/แยกเสียง/YoutubeSpy/คิวงาน ฯลฯ)
+- ✅ **อัปเดต: Shared Queue Pending Detail (2026-04-28)** — เพิ่มการแสดงรายละเอียดงานที่ค้างใน Shared Queue ตอน Safe Restart รอ (โชว์ `task id/type/created_at`) เพื่อหาตัวงานที่บล็อก `sr` ได้ทันที
 - ✅ **อัปเดต: Console Shortcut `w` (2026-04-28)** — เพิ่มตัวย่อ `w` สำหรับดูสถานะรอ Safe Restart (เทียบเท่า `busy`) เพื่อพิมพ์สั้นลงและเช็กได้ไวขึ้น
 - ✅ **อัปเดต: Safe Interaction Reply (2026-04-28)** — แก้แครชคำสั่งเพลง `/เล่น` ที่ขึ้น `InteractionResponded` จากการตอบ Interaction ซ้ำ โดยเพิ่ม helper ส่งข้อความแบบปลอดภัย (เลือก `response` หรือ `followup` อัตโนมัติ) และกันการ `defer()` ซ้ำ รวมถึงทำให้ข้อความสถานะของการโหลดเพลย์ลิสต์ส่งได้เสถียรขึ้น
 - ✅ ปรับ `/โหลดคลิป` ให้กันค้างจากลิงก์ YouTube ที่พ่วง playlist และจัดการข้อความ error ให้อ่านง่ายขึ้น
