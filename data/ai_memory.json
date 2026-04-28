@@ -243,5 +243,31 @@
     "summary": "",
     "personality": "casual",
     "last_seen": "2026-04-20T05:52:46"
+  },
+  "1406221383289147512": {
+    "facts": {
+      "name": "dontaskmewhathappened"
+    },
+    "history": [
+      {
+        "role": "user",
+        "msg": "เคไอสัส"
+      },
+      {
+        "role": "bot",
+        "msg": ""
+      },
+      {
+        "role": "user",
+        "msg": "กูมีเเฟนเป็นเฟมบอยผิดมั้ย"
+      },
+      {
+        "role": "bot",
+        "msg": ""
+      }
+    ],
+    "summary": "",
+    "personality": "casual",
+    "last_seen": "2026-04-24T00:26:34"
   }
 }

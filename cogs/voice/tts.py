@@ -10,6 +10,7 @@ import re
 import tempfile
 import speech_recognition as sr
 import io
+import json
 from typing import Optional
 
 logger = logging.getLogger('discord_bot')
@@ -76,8 +77,14 @@ class TTSCommand(commands.Cog):
             return
 
         try:
+            if os.path.getsize(self.state_file) == 0:
+                return
+
             with open(self.state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
+                try:
+                    state = json.load(f)
+                except json.JSONDecodeError:
+                    return # Ignore empty or corrupted JSON file
             
             for gid_str, items in state.items():
                 guild_id = int(gid_str)

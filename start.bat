@@ -9,4 +9,4 @@ call .venv\Scripts\activate.bat
 python bot.py
 
 :: Keep the window open if there's an error
-pause 
+pause

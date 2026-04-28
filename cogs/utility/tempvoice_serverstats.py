@@ -261,6 +261,7 @@ class TempVoiceServerStats(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        if member.bot: return
         guild = member.guild
         cfg = self._get_tv_cfg(guild.id)
         if not cfg:

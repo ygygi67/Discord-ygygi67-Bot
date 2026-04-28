@@ -197,6 +197,87 @@ class AlphaBotBase:
         self._graceful_restart_requested = False
         self._stop_requested = False
         self._is_shutting_down = False
+        self.active_processes = set()
+
+    async def _send_offline_status(self):
+        """Helper to send the 'ปิดบอทแล้วน่าา' message to status channel"""
+        try:
+            status_cog = self.get_cog('Status')
+            if status_cog and hasattr(status_cog, 'status_channel_id') and status_cog.status_channel_id:
+                channel = self.get_channel(status_cog.status_channel_id) or await self.fetch_channel(status_cog.status_channel_id)
+                if channel:
+                    # Attempt to purge old status messages
+                    try: await channel.purge(limit=5)
+                    except: pass
+                    
+                    embed = discord.Embed(
+                        title="🔴 ปิดบอทแล้วน่าา | System Closed",
+                        description="บอทถูกปิดการใช้งานตามคำสั่งเรียบร้อยแล้วครับ",
+                        color=0xe74c3c,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed.set_footer(text="แล้วเจอกันใหม่นะ!")
+                    await channel.send(embed=embed)
+                    logger.info("Sent offline status to status channel")
+        except Exception as e:
+            logger.warning(f"Could not send offline status: {e}")
+
+    async def _disconnect_voice_clients(self):
+        """Helper to disconnect all voice clients in parallel with a timeout"""
+        if not self.voice_clients:
+            return
+
+        logger.info(f"Disconnecting {len(self.voice_clients)} voice client(s)...")
+        
+        async def safe_disconnect(vc):
+            try:
+                # Use wait_for to prevent hanging forever on a single VC
+                # On Windows, force=True is important
+                await asyncio.wait_for(vc.disconnect(force=True), timeout=4.0)
+            except Exception as e:
+                logger.warning(f"Failed to disconnect VC in {vc.guild.name}: {e}")
+
+        # Disconnect all in parallel
+        tasks = [safe_disconnect(vc) for vc in list(self.voice_clients)]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("Voice clients disconnected.")
+
+    async def _cancel_all_tasks(self):
+        """Helper to cancel all background tasks started by the bot"""
+        logger.info("Cancelling all background tasks...")
+        
+        # 1. Unload all cogs first (this triggers cog_unload)
+        cogs_to_remove = list(self.cogs.keys())
+        for cog_name in cogs_to_remove:
+            try:
+                logger.info(f"Unloading cog: {cog_name}...")
+                await asyncio.wait_for(self.remove_cog(cog_name), timeout=10.0)
+            except Exception as e:
+                logger.warning(f"Error removing cog {cog_name}: {e}")
+
+        # 2. Kill tracked background processes (ToffeeShare, etc.)
+        if hasattr(self, 'active_processes') and self.active_processes:
+            logger.info(f"Cleaning up {len(self.active_processes)} active processes...")
+            for proc in list(self.active_processes):
+                try:
+                    proc.terminate()
+                    await asyncio.sleep(0.1)
+                    if hasattr(proc, 'kill'): proc.kill()
+                except: pass
+            self.active_processes.clear()
+
+        # 3. Cancel all remaining tasks
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if not tasks: return
+        
+        for task in tasks:
+            task.cancel()
+            
+        try:
+            # Give tasks a moment to handle cancellation
+            await asyncio.wait(tasks, timeout=2.0)
+        except: pass
 
     async def _runtime_app_command_check(self, interaction: discord.Interaction) -> bool:
         cmd_name = None
@@ -674,16 +755,9 @@ class AlphaBotBase:
             logger.error(f"Error in _notify_network_recovery: {e}")
 
     async def _handle_unexpected_restart(self):
-        """จัดการเมื่อตรวจพบว่าบอทเปิดใหม่หลังจากการปิดตัวแบบไม่ปกติ (เช่น คอมดับ/โดนขโมย)"""
+        """จัดการเมื่อตรวจพบว่าบอทเปิดใหม่หลังจากการปิดตัวแบบไม่ปกติ"""
         try:
-            import aiohttp
-            ip_info = {}
-            async with aiohttp.ClientSession() as session:
-                async with session.get('http://ip-api.com/json/') as resp:
-                    if resp.status == 200:
-                        ip_info = await resp.json()
-            
-            # บันทึกลงสถานะว่าเกิดเหตุการณ์ไม่ปกติ (เพื่อแสดงใน Dashboard แบบไม่ระบุรายละเอียดส่วนตัว)
+            # บันทึกลงสถานะว่าเกิดเหตุการณ์ไม่ปกติ
             try:
                 status_data = {}
                 if os.path.exists(NETWORK_STATUS_FILE):
@@ -695,32 +769,18 @@ class AlphaBotBase:
                     json.dump(status_data, f, indent=4)
             except Exception: pass
 
-            # ส่ง DM แจ้งเตือนเจ้าของบอท (Security Report)
+            # แจ้งเตือนเจ้าของบอทแบบเรียบง่าย
             try:
                 app_info = await self.application_info()
                 owner = app_info.owner
                 
-                ip = ip_info.get("query", "Unknown")
-                city = ip_info.get("city", "Unknown")
-                country = ip_info.get("country", "Unknown")
-                isp = ip_info.get("isp", "Unknown")
-                lat = ip_info.get("lat")
-                lon = ip_info.get("lon")
-                maps_url = f"https://www.google.com/maps?q={lat},{lon}" if lat and lon else "N/A"
-
                 embed = discord.Embed(
-                    title="⚠️ บันทึกการฟื้นฟูระบบฉุกเฉิน (Security Report)",
-                    description="บอทตรวจพบว่าเพิ่งเปิดใช้งานหลังจากมีการปิดตัวลงอย่างไม่ปกติ ระบบได้บันทึกที่อยู่ IP และพิกัดปัจจุบันไว้เพื่อความปลอดภัย",
+                    title="⚠️ ตรวจพบการเริ่มต้นใหม่หลังระบบขัดข้อง",
+                    description="บอทเพิ่งเปิดใช้งานหลังจากมีการปิดตัวลงอย่างไม่ปกติ (เช่น คอมดับ หรือโปรเซสถูกสั่งปิดกะทันหัน) ระบบได้กลับมาทำงานตามปกติแล้วครับ",
                     color=discord.Color.red(),
                     timestamp=datetime.now()
                 )
-                embed.add_field(name="🌐 Public IP", value=f"`{ip}`", inline=True)
-                embed.add_field(name="🏢 ISP", value=f"`{isp}`", inline=True)
-                embed.add_field(name="📍 ที่อยู่", value=f"`{city}, {country}`", inline=False)
-                if maps_url != "N/A":
-                    embed.add_field(name="🗺️ แผนที่พิกัดปัจจุบัน", value=f"[คลิกเพื่อดูใน Google Maps]({maps_url})", inline=False)
-                
-                embed.set_footer(text="ข้อมูลนี้จะส่งให้คุณคนเดียวเท่านั้น ไม่ปรากฏใน Dashboard สาธารณะ")
+                embed.set_footer(text="สถานะถูกบันทึกลงใน Dashboard เรียบร้อย")
                 await owner.send(embed=embed)
                 logger.info(f"Sent security restart report to owner {owner.name}")
             except Exception as e:
@@ -740,6 +800,9 @@ class AlphaBotBase:
                 logger.error(f"Cleanup error: {e}")
 
     async def on_ready(self):
+        if self._is_shutting_down:
+            return
+
         logger.info(f"✅ {self.mode.capitalize()} Ready! User: {self.user}")
         
         # 1. ตรวจสอบสถานะการปิดตัวล่าสุด
@@ -752,6 +815,8 @@ class AlphaBotBase:
             with open(ALIVE_FLAG, 'w', encoding='utf-8') as f:
                 f.write(f"PID: {os.getpid()} | START: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         except Exception: pass
+        
+        if self._is_shutting_down: return
 
         # 2. ตรวจสอบการกู้คืนจากเน็ตหลุด
         if os.path.exists(NETWORK_ERROR_FILE):
@@ -832,41 +897,29 @@ class AlphaBot(AlphaBotBase, commands.Bot):
         self.mode = 'standalone'
 
     async def close(self):
+        if getattr(self, "_already_closing", False):
+            return
+        self._already_closing = True
         self._is_shutting_down = True
         logger.info("Closing bot gracefully...")
 
-        # ส่งสถานะปิดบอทลง Status Channel ก่อนปิดการเชื่อมต่อ
-        try:
-            status_cog = self.get_cog('Status')
-            if status_cog and hasattr(status_cog, 'status_channel_id') and status_cog.status_channel_id:
-                channel = self.get_channel(status_cog.status_channel_id) or await self.fetch_channel(status_cog.status_channel_id)
-                if channel:
-                    await channel.purge(limit=10)
-                    embed = discord.Embed(
-                        title="🔴 ระบบหยุดการทำงาน | System Closed",
-                        description="บอทถูกปิดการใช้งานชั่วคราว (Graceful Shutdown) เพื่อการบำรุงรักษาหรือรีสตาร์ท",
-                        color=0xe74c3c,
-                        timestamp=datetime.now(timezone.utc)
-                    )
-                    embed.set_footer(text="รอการเปิดใช้งานครั้งถัดไป...")
-                    await channel.send(embed=embed)
-                    logger.info("Sent offline status to status channel")
-        except Exception as e:
-            logger.warning(f"Could not send offline status: {e}")
+        # 1. ส่งสถานะปิดบอทลง Status Channel ก่อนปิดการเชื่อมต่อ
+        await self._send_offline_status()
 
-        # ลบ Flag ว่ากำลังทำงานอยู่ (เพราะปิดแบบปกติ)
+        # 2. ลบ Flag ว่ากำลังทำงานอยู่ (เพราะปิดแบบปกติ)
         if os.path.exists(ALIVE_FLAG):
             try: os.remove(ALIVE_FLAG)
             except: pass
 
-        # Disconnect all voice clients explicitly
-        for vc in list(self.voice_clients):
-            try:
-                await vc.disconnect(force=True)
-            except Exception:
-                pass
+        # 3. Disconnect all voice clients explicitly with safety timeout
+        await self._disconnect_voice_clients()
+        
+        # 4. ยกเลิก Task ทั้งหมด
+        await self._cancel_all_tasks()
+        
         await asyncio.sleep(0.5)
         await super().close()
+        logger.info("Bot closed successfully.")
 
 class DistributedAlphaBot(AlphaBotBase, commands.AutoShardedBot):
     def __init__(self, **kwargs):
@@ -889,16 +942,29 @@ class DistributedAlphaBot(AlphaBotBase, commands.AutoShardedBot):
         self.mode = dcfg.BOT_MODE
 
     async def close(self):
+        if getattr(self, "_already_closing", False):
+            return
+        self._already_closing = True
         self._is_shutting_down = True
         logger.info("Closing autosharded bot gracefully...")
-        # Disconnect all voice clients explicitly before closing gateway
-        for vc in list(self.voice_clients):
-            try:
-                await vc.disconnect(force=True)
-            except Exception:
-                pass
+        
+        # 1. ส่งสถานะปิดบอทลง Status Channel
+        await self._send_offline_status()
+
+        # 2. ลบ Flag ว่ากำลังทำงานอยู่
+        if os.path.exists(ALIVE_FLAG):
+            try: os.remove(ALIVE_FLAG)
+            except: pass
+
+        # 3. Disconnect all voice clients explicitly with safety timeout
+        await self._disconnect_voice_clients()
+
+        # 4. ยกเลิก Task ทั้งหมด
+        await self._cancel_all_tasks()
+
         await asyncio.sleep(0.5)
         await super().close()
+        logger.info("Autosharded bot closed successfully.")
 
     async def on_shard_ready(self, shard_id):
         logger.info(f"🟢 Shard {shard_id} Ready")
@@ -935,10 +1001,17 @@ def run_bot():
 
             except KeyboardInterrupt:
                 return
-            except (discord.GatewayNotFound, discord.ConnectionClosed, OSError, ConnectionResetError, asyncio.TimeoutError) as e:
+            except (discord.GatewayNotFound, discord.ConnectionClosed, OSError, ConnectionResetError, asyncio.TimeoutError, Exception) as e:
+                # ตรวจสอบว่าเป็น Exception ที่ต้องการข้ามหรือไม่ (เช่น KeyboardInterrupt ถูกดักไปแล้ว)
+                if isinstance(e, KeyboardInterrupt): return
+                
                 # สร้างไฟล์ Flag แสดงว่าหลุดเพราะเน็ต
                 now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 try:
+                    # มั่นใจว่าลบ ALIVE_FLAG ก่อนบันทึกความผิดพลาดเครือข่าย เพื่อไม่ให้ระบบเข้าใจผิดว่าบอทค้าง
+                    if os.path.exists(ALIVE_FLAG):
+                        os.remove(ALIVE_FLAG)
+                        
                     with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
                         f.write(now_str)
                     
@@ -951,12 +1024,16 @@ def run_bot():
                         except Exception: pass
                     status_data["last_outage"] = now_str
                     status_data["status"] = "offline"
+                    # ตรวจสอบว่าเป็นเหตุการณ์ไม่ปกติหรือไม่ (ถ้าไม่ใช่ OSError ทั่วไป)
+                    if not isinstance(e, (discord.GatewayNotFound, discord.ConnectionClosed, ConnectionResetError)):
+                         status_data["unexpected_event"] = True
+                         
                     with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
                         json.dump(status_data, f, indent=4)
                 except Exception: pass
                 
                 delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
-                logger.warning(f"🌐 Network/Gateway error: {e}. Reconnecting in {delay}s")
+                logger.warning(f"🌐 Network/Gateway/Runtime error: {e}. Reconnecting in {delay}s")
                 await asyncio.sleep(delay)
             except Exception as e:
                 delay = min(max_delay, base_delay * (2 ** (attempt - 1)))

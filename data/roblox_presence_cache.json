@@ -5,9 +5,9 @@
     "user_id": "3535260140",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776789491.901961,
-    "game_duration_sec": 13950.304131507874,
-    "updated_at": "2026-04-22T17:47:39.393030+00:00"
+    "last_online_ts": 1777315300.528043,
+    "game_duration_sec": 31740.866654634476,
+    "updated_at": "2026-04-28T04:33:40.567637+00:00"
   },
   "2890774848": {
     "display_name": "sun",
@@ -15,9 +15,9 @@
     "user_id": "2890774848",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776490845.131791,
-    "game_duration_sec": 1437.3892891407013,
-    "updated_at": "2026-04-22T17:47:39.395817+00:00"
+    "last_online_ts": 1777017837.445795,
+    "game_duration_sec": 4287.610650062561,
+    "updated_at": "2026-04-28T04:33:40.568683+00:00"
   },
   "9750405695": {
     "display_name": "NINE_TAILS07860",
@@ -27,7 +27,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.396182+00:00"
+    "updated_at": "2026-04-28T04:33:40.568863+00:00"
   },
   "9582466549": {
     "display_name": "hollow_Knight",
@@ -37,7 +37,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.396812+00:00"
+    "updated_at": "2026-04-28T04:33:40.569076+00:00"
   },
   "4738021567": {
     "display_name": "CDC651",
@@ -47,7 +47,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.397126+00:00"
+    "updated_at": "2026-04-28T04:33:40.569277+00:00"
   },
   "8049825004": {
     "display_name": "265gxg",
@@ -55,9 +55,9 @@
     "user_id": "8049825004",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776875727.298289,
-    "game_duration_sec": 113454.40483784676,
-    "updated_at": "2026-04-22T17:47:39.397428+00:00"
+    "last_online_ts": 1777349738.534923,
+    "game_duration_sec": 154356.03538060188,
+    "updated_at": "2026-04-28T04:33:40.569461+00:00"
   },
   "10523250317": {
     "display_name": "legend_1234212",
@@ -65,19 +65,19 @@
     "user_id": "10523250317",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776860255.171881,
-    "game_duration_sec": 15189.843465328217,
-    "updated_at": "2026-04-22T17:47:39.397885+00:00"
+    "last_online_ts": 1777289777.246855,
+    "game_duration_sec": 67475.55622673035,
+    "updated_at": "2026-04-28T04:33:40.569637+00:00"
   },
   "3256723245": {
     "display_name": "rye",
     "username": "ryeloyer6",
     "user_id": "3256723245",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776874540.332514,
-    "game_duration_sec": 170420.76746201515,
-    "updated_at": "2026-04-22T17:47:39.398454+00:00"
+    "status_type": 1,
+    "status_text": "🟢 Online",
+    "last_online_ts": 1777350820.569805,
+    "game_duration_sec": 313557.71864151955,
+    "updated_at": "2026-04-28T04:33:40.569808+00:00"
   },
   "8052186131": {
     "display_name": "toma_shikulu555",
@@ -87,7 +87,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.398920+00:00"
+    "updated_at": "2026-04-28T04:33:40.569988+00:00"
   },
   "10623878107": {
     "display_name": "kopl5_dft321",
@@ -97,7 +97,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.399728+00:00"
+    "updated_at": "2026-04-28T04:33:40.570158+00:00"
   },
   "7940883816": {
     "display_name": "SARUN1016iuccc",
@@ -107,7 +107,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.400172+00:00"
+    "updated_at": "2026-04-28T04:33:40.570318+00:00"
   },
   "7099453948": {
     "display_name": "Oak_Teeraphong",
@@ -117,7 +117,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.400718+00:00"
+    "updated_at": "2026-04-28T04:33:40.570484+00:00"
   },
   "10217817280": {
     "display_name": "biwm300",
@@ -127,7 +127,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.401169+00:00"
+    "updated_at": "2026-04-28T04:33:40.570649+00:00"
   },
   "10087713107": {
     "display_name": "RUY",
@@ -137,7 +137,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.401615+00:00"
+    "updated_at": "2026-04-28T04:33:40.570815+00:00"
   },
   "8624397587": {
     "display_name": "Ploy16",
@@ -147,17 +147,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.402051+00:00"
+    "updated_at": "2026-04-28T04:33:40.570991+00:00"
   },
   "8178591377": {
-    "display_name": "baby",
+    "display_name": "PPO",
     "username": "hihihididj",
     "user_id": "8178591377",
-    "status_type": 1,
-    "status_text": "🟢 Online",
-    "last_online_ts": 1776880059.402504,
-    "game_duration_sec": 95544.98387742043,
-    "updated_at": "2026-04-22T17:47:39.402512+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.571164,
+    "game_duration_sec": 153398.8644235134,
+    "updated_at": "2026-04-28T04:33:40.571167+00:00"
   },
   "7784244416": {
     "display_name": "Seekljhfdo",
@@ -167,17 +167,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.402862+00:00"
+    "updated_at": "2026-04-28T04:33:40.571325+00:00"
   },
   "9040353959": {
     "display_name": "Socrates_Xx2026xX",
     "username": "ABC_12300143",
     "user_id": "9040353959",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.403332,
-    "game_duration_sec": 192912.42758369446,
-    "updated_at": "2026-04-22T17:47:39.403338+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777325618.14762,
+    "game_duration_sec": 205653.2488193512,
+    "updated_at": "2026-04-28T04:33:40.571481+00:00"
   },
   "9546593259": {
     "display_name": "OIO",
@@ -185,9 +185,9 @@
     "user_id": "9546593259",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776875367.399151,
-    "game_duration_sec": 122825.97961759567,
-    "updated_at": "2026-04-22T17:47:39.403830+00:00"
+    "last_online_ts": 1777331907.514286,
+    "game_duration_sec": 195892.55870437622,
+    "updated_at": "2026-04-28T04:33:40.571660+00:00"
   },
   "8567654575": {
     "display_name": "Lord_DakuPlays",
@@ -197,7 +197,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776160440.183089,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.404442+00:00"
+    "updated_at": "2026-04-28T04:33:40.571832+00:00"
   },
   "10392098294": {
     "display_name": "yiwha215",
@@ -207,7 +207,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.404941+00:00"
+    "updated_at": "2026-04-28T04:33:40.572001+00:00"
   },
   "4382753577": {
     "display_name": "captain",
@@ -215,9 +215,9 @@
     "user_id": "4382753577",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776873997.099328,
-    "game_duration_sec": 169131.63533639908,
-    "updated_at": "2026-04-22T17:47:39.405378+00:00"
+    "last_online_ts": 1777349258.169309,
+    "game_duration_sec": 321850.7453863621,
+    "updated_at": "2026-04-28T04:33:40.572156+00:00"
   },
   "7095035466": {
     "display_name": "SCP_67",
@@ -227,7 +227,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.405695+00:00"
+    "updated_at": "2026-04-28T04:33:40.572318+00:00"
   },
   "10145446093": {
     "display_name": "fcygygi67",
@@ -237,17 +237,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.406037+00:00"
+    "updated_at": "2026-04-28T04:33:40.572526+00:00"
   },
   "5031205479": {
     "display_name": "Sebestyen9801",
     "username": "Sebestyen9801",
     "user_id": "5031205479",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.406524,
-    "game_duration_sec": 313861.071372509,
-    "updated_at": "2026-04-22T17:47:39.406530+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777350747.487875,
+    "game_duration_sec": 606509.265417099,
+    "updated_at": "2026-04-28T04:33:40.572698+00:00"
   },
   "10000623866": {
     "display_name": "hcwpgk",
@@ -257,17 +257,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.406855+00:00"
+    "updated_at": "2026-04-28T04:33:40.572839+00:00"
   },
   "6171803070": {
-    "display_name": "sg_all",
+    "display_name": "sg_sans",
     "username": "grimaceee2028",
     "user_id": "6171803070",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776873515.851057,
-    "game_duration_sec": 145643.7221429348,
-    "updated_at": "2026-04-22T17:47:39.407291+00:00"
+    "status_type": 1,
+    "status_text": "🟢 Online",
+    "last_online_ts": 1777350820.572994,
+    "game_duration_sec": 239097.09757733345,
+    "updated_at": "2026-04-28T04:33:40.572999+00:00"
   },
   "4103951946": {
     "display_name": "BrotherEd_BG",
@@ -275,9 +275,9 @@
     "user_id": "4103951946",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776254514.727072,
-    "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.407724+00:00"
+    "last_online_ts": 1777309300.033057,
+    "game_duration_sec": 18281.45908021927,
+    "updated_at": "2026-04-28T04:33:40.573166+00:00"
   },
   "10038493535": {
     "display_name": "pls_07866",
@@ -287,7 +287,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.408104+00:00"
+    "updated_at": "2026-04-28T04:33:40.573317+00:00"
   },
   "7473844592": {
     "display_name": "ZEIO93_1",
@@ -297,7 +297,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.408581+00:00"
+    "updated_at": "2026-04-28T04:33:40.573459+00:00"
   },
   "4366825517": {
     "display_name": "tiw_noos",
@@ -307,7 +307,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.409055+00:00"
+    "updated_at": "2026-04-28T04:33:40.573609+00:00"
   },
   "8267911149": {
     "display_name": "666",
@@ -317,7 +317,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.409522+00:00"
+    "updated_at": "2026-04-28T04:33:40.573754+00:00"
   },
   "10657548185": {
     "display_name": "gousb",
@@ -327,7 +327,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.410045+00:00"
+    "updated_at": "2026-04-28T04:33:40.573900+00:00"
   },
   "5018915540": {
     "display_name": "sevennn52",
@@ -337,7 +337,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.410604+00:00"
+    "updated_at": "2026-04-28T04:33:40.574045+00:00"
   },
   "10273984953": {
     "display_name": "Hoppy_Ez",
@@ -347,7 +347,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.410912+00:00"
+    "updated_at": "2026-04-28T04:33:40.574192+00:00"
   },
   "2422045137": {
     "display_name": "yztsstx2",
@@ -357,7 +357,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.411349+00:00"
+    "updated_at": "2026-04-28T04:33:40.574376+00:00"
   },
   "9231175095": {
     "display_name": "jhhfskjjgg",
@@ -367,7 +367,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.411962+00:00"
+    "updated_at": "2026-04-28T04:33:40.574540+00:00"
   },
   "5394549118": {
     "display_name": "spy",
@@ -375,9 +375,9 @@
     "user_id": "5394549118",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776545204.307782,
+    "last_online_ts": 1777290076.637592,
     "game_duration_sec": 5209.112964391708,
-    "updated_at": "2026-04-22T17:47:39.412318+00:00"
+    "updated_at": "2026-04-28T04:33:40.574703+00:00"
   },
   "10304205234": {
     "display_name": "fjgygby",
@@ -387,7 +387,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.412994+00:00"
+    "updated_at": "2026-04-28T04:33:40.574863+00:00"
   },
   "10487892188": {
     "display_name": "PARIWAT_ROBLOX",
@@ -397,7 +397,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.413456+00:00"
+    "updated_at": "2026-04-28T04:33:40.575038+00:00"
   },
   "2871153794": {
     "display_name": "PROB",
@@ -405,9 +405,9 @@
     "user_id": "2871153794",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776879398.0366,
-    "game_duration_sec": 26835.361726760864,
-    "updated_at": "2026-04-22T17:47:39.413883+00:00"
+    "last_online_ts": 1777257587.57839,
+    "game_duration_sec": 37618.025509119034,
+    "updated_at": "2026-04-28T04:33:40.575186+00:00"
   },
   "10424602660": {
     "display_name": "NPC90",
@@ -417,7 +417,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.414294+00:00"
+    "updated_at": "2026-04-28T04:33:40.575332+00:00"
   },
   "9460785861": {
     "display_name": "00Erik2",
@@ -427,7 +427,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.414703+00:00"
+    "updated_at": "2026-04-28T04:33:40.575478+00:00"
   },
   "5788727672": {
     "display_name": "Argsee_3004",
@@ -435,9 +435,9 @@
     "user_id": "5788727672",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776875080.369613,
-    "game_duration_sec": 106650.32986283302,
-    "updated_at": "2026-04-22T17:47:39.415049+00:00"
+    "last_online_ts": 1777347935.212427,
+    "game_duration_sec": 202344.6913778782,
+    "updated_at": "2026-04-28T04:33:40.575622+00:00"
   },
   "6087779465": {
     "display_name": "madnessdevLOL",
@@ -445,9 +445,9 @@
     "user_id": "6087779465",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776271319.793669,
-    "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.415385+00:00"
+    "last_online_ts": 1777303137.657661,
+    "game_duration_sec": 717.7546110153198,
+    "updated_at": "2026-04-28T04:33:40.575761+00:00"
   },
   "2952897617": {
     "display_name": "bacon",
@@ -455,19 +455,19 @@
     "user_id": "2952897617",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776863917.281909,
-    "game_duration_sec": 155655.46118855476,
-    "updated_at": "2026-04-22T17:47:39.416023+00:00"
+    "last_online_ts": 1777349920.474773,
+    "game_duration_sec": 262675.72317409515,
+    "updated_at": "2026-04-28T04:33:40.575898+00:00"
   },
   "4401534231": {
-    "display_name": "hikari",
+    "display_name": "snow_white",
     "username": "dogHANA_C",
     "user_id": "4401534231",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.416376,
-    "game_duration_sec": 170304.67900061607,
-    "updated_at": "2026-04-22T17:47:39.416381+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777322620.52008,
+    "game_duration_sec": 344750.1984424591,
+    "updated_at": "2026-04-28T04:33:40.576053+00:00"
   },
   "7848449193": {
     "display_name": "RED_TURN",
@@ -477,7 +477,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.416678+00:00"
+    "updated_at": "2026-04-28T04:33:40.576196+00:00"
   },
   "1805222093": {
     "display_name": "jjj157ooo",
@@ -487,7 +487,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.417074+00:00"
+    "updated_at": "2026-04-28T04:33:40.576339+00:00"
   },
   "7324214715": {
     "display_name": "Game",
@@ -497,7 +497,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776423259.415525,
     "game_duration_sec": 12427.076930999756,
-    "updated_at": "2026-04-22T17:47:39.417413+00:00"
+    "updated_at": "2026-04-28T04:33:40.576477+00:00"
   },
   "8393757934": {
     "display_name": "Capy_398",
@@ -507,7 +507,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.417729+00:00"
+    "updated_at": "2026-04-28T04:33:40.576769+00:00"
   },
   "6195145152": {
     "display_name": "hdgdhj34",
@@ -515,9 +515,9 @@
     "user_id": "6195145152",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776855259.590326,
-    "game_duration_sec": 65142.02126765251,
-    "updated_at": "2026-04-22T17:47:39.418171+00:00"
+    "last_online_ts": 1777306363.680064,
+    "game_duration_sec": 126225.5098669529,
+    "updated_at": "2026-04-28T04:33:40.576978+00:00"
   },
   "10658248638": {
     "display_name": "moons12394",
@@ -527,7 +527,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1775663960.524188,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.418601+00:00"
+    "updated_at": "2026-04-28T04:33:40.577137+00:00"
   },
   "1238767556": {
     "display_name": "Neno_pacuppie",
@@ -535,19 +535,19 @@
     "user_id": "1238767556",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776878920.596258,
-    "game_duration_sec": 20215.338554620743,
-    "updated_at": "2026-04-22T17:47:39.418903+00:00"
+    "last_online_ts": 1777136613.066465,
+    "game_duration_sec": 26270.038829803467,
+    "updated_at": "2026-04-28T04:33:40.577313+00:00"
   },
   "10232049154": {
-    "display_name": "callmenwo709",
+    "display_name": "ViB",
     "username": "callmenow709",
     "user_id": "10232049154",
     "status_type": 0,
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.419383+00:00"
+    "updated_at": "2026-04-28T04:33:40.577508+00:00"
   },
   "9735484941": {
     "display_name": "baTEN999007",
@@ -557,7 +557,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.419809+00:00"
+    "updated_at": "2026-04-28T04:33:40.577700+00:00"
   },
   "8251622060": {
     "display_name": "wait725_4",
@@ -567,7 +567,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.420149+00:00"
+    "updated_at": "2026-04-28T04:33:40.577852+00:00"
   },
   "9455669555": {
     "display_name": "ABC",
@@ -577,7 +577,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.420427+00:00"
+    "updated_at": "2026-04-28T04:33:40.577996+00:00"
   },
   "4257640814": {
     "display_name": "Kitasan",
@@ -585,9 +585,9 @@
     "user_id": "4257640814",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776834444.77958,
-    "game_duration_sec": 148808.83818292618,
-    "updated_at": "2026-04-22T17:47:39.420693+00:00"
+    "last_online_ts": 1777349798.491524,
+    "game_duration_sec": 210126.7402229309,
+    "updated_at": "2026-04-28T04:33:40.578142+00:00"
   },
   "5824824036": {
     "display_name": "vip",
@@ -597,7 +597,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.421015+00:00"
+    "updated_at": "2026-04-28T04:33:40.578324+00:00"
   },
   "8004458543": {
     "display_name": "YoyoThana9",
@@ -607,7 +607,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.421404+00:00"
+    "updated_at": "2026-04-28T04:33:40.578499+00:00"
   },
   "10129071763": {
     "display_name": "Leprosy",
@@ -617,7 +617,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.421786+00:00"
+    "updated_at": "2026-04-28T04:33:40.578682+00:00"
   },
   "10661603369": {
     "display_name": "Wkc_rohg0888",
@@ -625,9 +625,9 @@
     "user_id": "10661603369",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776852376.295548,
-    "game_duration_sec": 82773.83476877213,
-    "updated_at": "2026-04-22T17:47:39.422240+00:00"
+    "last_online_ts": 1777272281.218912,
+    "game_duration_sec": 113435.55234956741,
+    "updated_at": "2026-04-28T04:33:40.578886+00:00"
   },
   "7470965201": {
     "display_name": "bovb890",
@@ -637,7 +637,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.422727+00:00"
+    "updated_at": "2026-04-28T04:33:40.579098+00:00"
   },
   "4842333280": {
     "display_name": "bosstan1441",
@@ -647,17 +647,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.423151+00:00"
+    "updated_at": "2026-04-28T04:33:40.579377+00:00"
   },
   "10175576155": {
     "display_name": "Goodyear832",
     "username": "Goodyear832",
     "user_id": "10175576155",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776757872.073062,
-    "game_duration_sec": 102781.75404238701,
-    "updated_at": "2026-04-22T17:47:39.423450+00:00"
+    "status_type": 1,
+    "status_text": "🟢 Online",
+    "last_online_ts": 1777350820.579654,
+    "game_duration_sec": 156830.57639169693,
+    "updated_at": "2026-04-28T04:33:40.579661+00:00"
   },
   "8951779014": {
     "display_name": "Thanadol_4444",
@@ -667,7 +667,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.423810+00:00"
+    "updated_at": "2026-04-28T04:33:40.579990+00:00"
   },
   "10178705667": {
     "display_name": "wlr66679",
@@ -677,7 +677,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.424274+00:00"
+    "updated_at": "2026-04-28T04:33:40.580197+00:00"
   },
   "10340376088": {
     "display_name": "VIP",
@@ -687,17 +687,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.424616+00:00"
+    "updated_at": "2026-04-28T04:33:40.580383+00:00"
   },
   "8623911298": {
     "display_name": "nksopmxowk",
     "username": "nksopmxowk",
     "user_id": "8623911298",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776868300.418766,
-    "game_duration_sec": 105201.00068759918,
-    "updated_at": "2026-04-22T17:47:39.424936+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.580585,
+    "game_duration_sec": 190012.80161595345,
+    "updated_at": "2026-04-28T04:33:40.580589+00:00"
   },
   "5811064718": {
     "display_name": "BrezaMaggy",
@@ -707,7 +707,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.425332+00:00"
+    "updated_at": "2026-04-28T04:33:40.580747+00:00"
   },
   "5479140784": {
     "display_name": "R7D2",
@@ -717,7 +717,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776442097.997898,
     "game_duration_sec": 7461.4482617378235,
-    "updated_at": "2026-04-22T17:47:39.425897+00:00"
+    "updated_at": "2026-04-28T04:33:40.580895+00:00"
   },
   "8501539497": {
     "display_name": "TurkeyIsNowdays",
@@ -725,9 +725,9 @@
     "user_id": "8501539497",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776879878.631001,
-    "game_duration_sec": 42629.60203456879,
-    "updated_at": "2026-04-22T17:47:39.426350+00:00"
+    "last_online_ts": 1777319078.167824,
+    "game_duration_sec": 71992.62752461433,
+    "updated_at": "2026-04-28T04:33:40.581042+00:00"
   },
   "10543127349": {
     "display_name": "ugfjchkc",
@@ -737,7 +737,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.426863+00:00"
+    "updated_at": "2026-04-28T04:33:40.581198+00:00"
   },
   "8838975010": {
     "display_name": "izkzzoo",
@@ -747,7 +747,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.427254+00:00"
+    "updated_at": "2026-04-28T04:33:40.581348+00:00"
   },
   "10003564686": {
     "display_name": "nyxven",
@@ -757,7 +757,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.427633+00:00"
+    "updated_at": "2026-04-28T04:33:40.581494+00:00"
   },
   "7252842445": {
     "display_name": "777g",
@@ -765,9 +765,9 @@
     "user_id": "7252842445",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776854542.886177,
-    "game_duration_sec": 90917.72542643547,
-    "updated_at": "2026-04-22T17:47:39.428160+00:00"
+    "last_online_ts": 1777130789.857691,
+    "game_duration_sec": 93147.00258851051,
+    "updated_at": "2026-04-28T04:33:40.581643+00:00"
   },
   "10365639502": {
     "display_name": "67_675260",
@@ -775,9 +775,9 @@
     "user_id": "10365639502",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776863798.041462,
-    "game_duration_sec": 45556.31499052048,
-    "updated_at": "2026-04-22T17:47:39.428587+00:00"
+    "last_online_ts": 1777341578.168179,
+    "game_duration_sec": 160320.25183844566,
+    "updated_at": "2026-04-28T04:33:40.581803+00:00"
   },
   "8427571167": {
     "display_name": "James",
@@ -785,9 +785,9 @@
     "user_id": "8427571167",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776868660.783412,
-    "game_duration_sec": 55446.117260456085,
-    "updated_at": "2026-04-22T17:47:39.428989+00:00"
+    "last_online_ts": 1777279473.303376,
+    "game_duration_sec": 96699.2363357544,
+    "updated_at": "2026-04-28T04:33:40.581956+00:00"
   },
   "10411169171": {
     "display_name": "Pin",
@@ -795,9 +795,9 @@
     "user_id": "10411169171",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776847337.196745,
-    "game_duration_sec": 11647.454956769943,
-    "updated_at": "2026-04-22T17:47:39.429448+00:00"
+    "last_online_ts": 1777287726.774239,
+    "game_duration_sec": 12007.791683673859,
+    "updated_at": "2026-04-28T04:33:40.582101+00:00"
   },
   "8393406845": {
     "display_name": "nuggets",
@@ -807,7 +807,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.429879+00:00"
+    "updated_at": "2026-04-28T04:33:40.582243+00:00"
   },
   "3477211589": {
     "display_name": "TYPLMNG",
@@ -815,9 +815,9 @@
     "user_id": "3477211589",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776847637.411067,
-    "game_duration_sec": 10982.083894252777,
-    "updated_at": "2026-04-22T17:47:39.430319+00:00"
+    "last_online_ts": 1777289354.691671,
+    "game_duration_sec": 18589.074425697327,
+    "updated_at": "2026-04-28T04:33:40.582390+00:00"
   },
   "7080487810": {
     "display_name": "Rayup",
@@ -825,9 +825,9 @@
     "user_id": "7080487810",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776870758.033391,
-    "game_duration_sec": 34883.20178079605,
-    "updated_at": "2026-04-22T17:47:39.431026+00:00"
+    "last_online_ts": 1777312957.814094,
+    "game_duration_sec": 35422.82788467407,
+    "updated_at": "2026-04-28T04:33:40.582578+00:00"
   },
   "10287737677": {
     "display_name": "ngfhdrjyjrj",
@@ -837,7 +837,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.431908+00:00"
+    "updated_at": "2026-04-28T04:33:40.582747+00:00"
   },
   "7402956118": {
     "display_name": "GHJ",
@@ -847,17 +847,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.432388+00:00"
+    "updated_at": "2026-04-28T04:33:40.582902+00:00"
   },
   "9903405544": {
     "display_name": "Hanju_0010",
     "username": "Hanju_0010",
     "user_id": "9903405544",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.432822,
-    "game_duration_sec": 93641.04867577553,
-    "updated_at": "2026-04-22T17:47:39.432828+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777298935.844972,
+    "game_duration_sec": 136557.64219617844,
+    "updated_at": "2026-04-28T04:33:40.583052+00:00"
   },
   "10045484681": {
     "display_name": "SkyOnyx5063",
@@ -867,7 +867,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.433255+00:00"
+    "updated_at": "2026-04-28T04:33:40.583194+00:00"
   },
   "10088883638": {
     "display_name": "Abd96779",
@@ -877,7 +877,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.433677+00:00"
+    "updated_at": "2026-04-28T04:33:40.583356+00:00"
   },
   "8039516149": {
     "display_name": "Auto0230",
@@ -887,17 +887,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.434100+00:00"
+    "updated_at": "2026-04-28T04:33:40.583501+00:00"
   },
   "7546045924": {
     "display_name": "xFaster3121",
     "username": "xFaster3121",
     "user_id": "7546045924",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.434541,
-    "game_duration_sec": 87007.64542508125,
-    "updated_at": "2026-04-22T17:47:39.434547+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777314098.423721,
+    "game_duration_sec": 196439.36975550652,
+    "updated_at": "2026-04-28T04:33:40.583646+00:00"
   },
   "10059170907": {
     "display_name": "THA",
@@ -907,7 +907,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776244794.972098,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.434939+00:00"
+    "updated_at": "2026-04-28T04:33:40.583793+00:00"
   },
   "8215492773": {
     "display_name": "fcPs4_Pro",
@@ -915,9 +915,9 @@
     "user_id": "8215492773",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776878440.377353,
-    "game_duration_sec": 50564.11734890938,
-    "updated_at": "2026-04-22T17:47:39.435328+00:00"
+    "last_online_ts": 1777321000.492926,
+    "game_duration_sec": 103724.25204777718,
+    "updated_at": "2026-04-28T04:33:40.583942+00:00"
   },
   "5486740888": {
     "display_name": "TheGhoul",
@@ -927,7 +927,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.435766+00:00"
+    "updated_at": "2026-04-28T04:33:40.584089+00:00"
   },
   "9889821334": {
     "display_name": "TIMENDN",
@@ -937,7 +937,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.436124+00:00"
+    "updated_at": "2026-04-28T04:33:40.584240+00:00"
   },
   "10226458246": {
     "display_name": "hvjh799",
@@ -947,7 +947,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.436486+00:00"
+    "updated_at": "2026-04-28T04:33:40.584382+00:00"
   },
   "10196262677": {
     "display_name": "pvp12345321",
@@ -957,17 +957,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.436789+00:00"
+    "updated_at": "2026-04-28T04:33:40.584527+00:00"
   },
   "7709854546": {
-    "display_name": "olyb",
+    "display_name": "rtyyotyi42froowec6vq",
     "username": "Lovemama6394",
     "user_id": "7709854546",
     "status_type": 0,
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.437215+00:00"
+    "updated_at": "2026-04-28T04:33:40.584670+00:00"
   },
   "5791603509": {
     "display_name": "Wkc_rohg081Oom",
@@ -977,7 +977,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.437520+00:00"
+    "updated_at": "2026-04-28T04:33:40.584822+00:00"
   },
   "5000742053": {
     "display_name": "aaaa",
@@ -987,17 +987,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.437847+00:00"
+    "updated_at": "2026-04-28T04:33:40.584977+00:00"
   },
   "4211060484": {
     "display_name": "Socialburden",
     "username": "Teeranid_nid",
     "user_id": "4211060484",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.438241,
-    "game_duration_sec": 126004.5672082901,
-    "updated_at": "2026-04-22T17:47:39.438247+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777288538.635476,
+    "game_duration_sec": 200811.21845173836,
+    "updated_at": "2026-04-28T04:33:40.585138+00:00"
   },
   "2550922035": {
     "display_name": "I3AD_l30Y",
@@ -1005,9 +1005,9 @@
     "user_id": "2550922035",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776851419.554222,
-    "game_duration_sec": 2887.3619940280914,
-    "updated_at": "2026-04-22T17:47:39.438652+00:00"
+    "last_online_ts": 1777350460.557328,
+    "game_duration_sec": 9939.35688829422,
+    "updated_at": "2026-04-28T04:33:40.585312+00:00"
   },
   "9198585481": {
     "display_name": "eoifg",
@@ -1017,7 +1017,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.439063+00:00"
+    "updated_at": "2026-04-28T04:33:40.585472+00:00"
   },
   "3343543394": {
     "display_name": "P_PhuPha",
@@ -1025,9 +1025,9 @@
     "user_id": "3343543394",
     "status_type": 2,
     "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.439491,
-    "game_duration_sec": 247791.25989365578,
-    "updated_at": "2026-04-22T17:47:39.439499+00:00"
+    "last_online_ts": 1777350820.585651,
+    "game_duration_sec": 391055.308368206,
+    "updated_at": "2026-04-28T04:33:40.585656+00:00"
   },
   "3812322874": {
     "display_name": "sern7799",
@@ -1037,7 +1037,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.440146+00:00"
+    "updated_at": "2026-04-28T04:33:40.585842+00:00"
   },
   "4680583314": {
     "display_name": "yuii99",
@@ -1047,7 +1047,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.440740+00:00"
+    "updated_at": "2026-04-28T04:33:40.586011+00:00"
   },
   "9299211022": {
     "display_name": "HBD",
@@ -1057,7 +1057,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776325881.318305,
     "game_duration_sec": 455.081933259964,
-    "updated_at": "2026-04-22T17:47:39.441290+00:00"
+    "updated_at": "2026-04-28T04:33:40.586164+00:00"
   },
   "5496158739": {
     "display_name": "Nangmak49",
@@ -1065,9 +1065,9 @@
     "user_id": "5496158739",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776862420.406656,
-    "game_duration_sec": 50106.14255404472,
-    "updated_at": "2026-04-22T17:47:39.441820+00:00"
+    "last_online_ts": 1777340554.004872,
+    "game_duration_sec": 105199.5793645382,
+    "updated_at": "2026-04-28T04:33:40.586382+00:00"
   },
   "6042448046": {
     "display_name": "bate4499",
@@ -1077,7 +1077,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.442338+00:00"
+    "updated_at": "2026-04-28T04:33:40.586614+00:00"
   },
   "10235426284": {
     "display_name": "yourIyou11",
@@ -1087,7 +1087,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.442863+00:00"
+    "updated_at": "2026-04-28T04:33:40.586845+00:00"
   },
   "4224177916": {
     "display_name": "HaZe",
@@ -1095,9 +1095,9 @@
     "user_id": "4224177916",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776879097.147954,
-    "game_duration_sec": 148252.31444239616,
-    "updated_at": "2026-04-22T17:47:39.443394+00:00"
+    "last_online_ts": 1777350640.527931,
+    "game_duration_sec": 258907.6798968315,
+    "updated_at": "2026-04-28T04:33:40.586999+00:00"
   },
   "7561850790": {
     "display_name": "Iamayugi007_oc",
@@ -1105,9 +1105,9 @@
     "user_id": "7561850790",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776873576.863099,
-    "game_duration_sec": 73815.89346671104,
-    "updated_at": "2026-04-22T17:47:39.443930+00:00"
+    "last_online_ts": 1777298096.152659,
+    "game_duration_sec": 141146.86953949928,
+    "updated_at": "2026-04-28T04:33:40.587151+00:00"
   },
   "4993274167": {
     "display_name": "RIP_warp",
@@ -1115,9 +1115,9 @@
     "user_id": "4993274167",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776263875.000315,
-    "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.444433+00:00"
+    "last_online_ts": 1777279473.305817,
+    "game_duration_sec": 11672.379244089127,
+    "updated_at": "2026-04-28T04:33:40.587302+00:00"
   },
   "10217413948": {
     "display_name": "uiiekd9",
@@ -1127,7 +1127,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.444958+00:00"
+    "updated_at": "2026-04-28T04:33:40.587457+00:00"
   },
   "4202555176": {
     "display_name": "PEPSI",
@@ -1135,9 +1135,9 @@
     "user_id": "4202555176",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776870455.024274,
-    "game_duration_sec": 73148.72862648964,
-    "updated_at": "2026-04-22T17:47:39.445524+00:00"
+    "last_online_ts": 1777345900.572561,
+    "game_duration_sec": 150482.4386575222,
+    "updated_at": "2026-04-28T04:33:40.587611+00:00"
   },
   "8371945118": {
     "display_name": "thaeeiei",
@@ -1147,7 +1147,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.446052+00:00"
+    "updated_at": "2026-04-28T04:33:40.587780+00:00"
   },
   "3584362635": {
     "display_name": "rip_ABCXD122445",
@@ -1157,7 +1157,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.446907+00:00"
+    "updated_at": "2026-04-28T04:33:40.587940+00:00"
   },
   "10131211529": {
     "display_name": "noname_221P",
@@ -1167,7 +1167,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.447439+00:00"
+    "updated_at": "2026-04-28T04:33:40.588090+00:00"
   },
   "3367140831": {
     "display_name": "Achawin",
@@ -1175,9 +1175,9 @@
     "user_id": "3367140831",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776859955.590345,
-    "game_duration_sec": 33649.104721069336,
-    "updated_at": "2026-04-22T17:47:39.447816+00:00"
+    "last_online_ts": 1777349377.308365,
+    "game_duration_sec": 93282.20771932602,
+    "updated_at": "2026-04-28T04:33:40.588242+00:00"
   },
   "8832965532": {
     "display_name": "K15435",
@@ -1187,7 +1187,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.448315+00:00"
+    "updated_at": "2026-04-28T04:33:40.588398+00:00"
   },
   "8114353083": {
     "display_name": "AFCTURBO",
@@ -1195,9 +1195,9 @@
     "user_id": "8114353083",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776852376.311214,
-    "game_duration_sec": 8158.3323612213135,
-    "updated_at": "2026-04-22T17:47:39.448862+00:00"
+    "last_online_ts": 1777347755.087711,
+    "game_duration_sec": 66660.27762579918,
+    "updated_at": "2026-04-28T04:33:40.588585+00:00"
   },
   "10136041580": {
     "display_name": "015",
@@ -1207,7 +1207,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.449372+00:00"
+    "updated_at": "2026-04-28T04:33:40.588764+00:00"
   },
   "4201302352": {
     "display_name": "Kaoaoy",
@@ -1217,7 +1217,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.449943+00:00"
+    "updated_at": "2026-04-28T04:33:40.588976+00:00"
   },
   "8360944275": {
     "display_name": "CynHac322",
@@ -1225,9 +1225,9 @@
     "user_id": "8360944275",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776782467.012841,
+    "last_online_ts": 1777292972.06301,
     "game_duration_sec": 4480.775595903397,
-    "updated_at": "2026-04-22T17:47:39.450409+00:00"
+    "updated_at": "2026-04-28T04:33:40.589151+00:00"
   },
   "8545707264": {
     "display_name": "Berm0841",
@@ -1235,19 +1235,19 @@
     "user_id": "8545707264",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 0.0,
-    "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.450835+00:00"
+    "last_online_ts": 1777268027.483156,
+    "game_duration_sec": 10925.477104663849,
+    "updated_at": "2026-04-28T04:33:40.589344+00:00"
   },
   "4911376625": {
     "display_name": "Bew4040",
     "username": "Bew4040",
     "user_id": "4911376625",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776879997.488964,
-    "game_duration_sec": 352152.16149425507,
-    "updated_at": "2026-04-22T17:47:39.451220+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.589511,
+    "game_duration_sec": 533315.1159250736,
+    "updated_at": "2026-04-28T04:33:40.589514+00:00"
   },
   "8008102452": {
     "display_name": "Kiryu",
@@ -1257,7 +1257,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776693909.711873,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.451711+00:00"
+    "updated_at": "2026-04-28T04:33:40.589672+00:00"
   },
   "8096536267": {
     "display_name": "Argp704",
@@ -1265,9 +1265,9 @@
     "user_id": "8096536267",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776867218.097965,
-    "game_duration_sec": 9503.596284866333,
-    "updated_at": "2026-04-22T17:47:39.452192+00:00"
+    "last_online_ts": 1777292074.757438,
+    "game_duration_sec": 12729.923346281052,
+    "updated_at": "2026-04-28T04:33:40.589835+00:00"
   },
   "9631940387": {
     "display_name": "noob_44",
@@ -1277,7 +1277,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.452596+00:00"
+    "updated_at": "2026-04-28T04:33:40.589997+00:00"
   },
   "4713657667": {
     "display_name": "AOPTCHPJ",
@@ -1285,9 +1285,9 @@
     "user_id": "4713657667",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776684369.670865,
-    "game_duration_sec": 18415.45564508438,
-    "updated_at": "2026-04-22T17:47:39.452969+00:00"
+    "last_online_ts": 1777347995.734692,
+    "game_duration_sec": 46944.55047631264,
+    "updated_at": "2026-04-28T04:33:40.595823+00:00"
   },
   "7093684753": {
     "display_name": "noorut_t",
@@ -1297,17 +1297,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.453335+00:00"
+    "updated_at": "2026-04-28T04:33:40.596013+00:00"
   },
   "7366329532": {
     "display_name": "harley_250199",
     "username": "harley_250198",
     "user_id": "7366329532",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776868540.9844,
-    "game_duration_sec": 53933.80048751831,
-    "updated_at": "2026-04-22T17:47:39.453818+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.596144,
+    "game_duration_sec": 97701.22674036026,
+    "updated_at": "2026-04-28T04:33:40.596148+00:00"
   },
   "8897498949": {
     "display_name": "ive282",
@@ -1317,37 +1317,37 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.454336+00:00"
+    "updated_at": "2026-04-28T04:33:40.596275+00:00"
   },
   "4360441518": {
     "display_name": "Nothing",
     "username": "Fcouss999",
     "user_id": "4360441518",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776874358.391565,
-    "game_duration_sec": 116478.63147711754,
-    "updated_at": "2026-04-22T17:47:39.454927+00:00"
+    "status_type": 1,
+    "status_text": "🟢 Online",
+    "last_online_ts": 1777350820.596408,
+    "game_duration_sec": 228338.26264548302,
+    "updated_at": "2026-04-28T04:33:40.596411+00:00"
   },
   "4432479518": {
     "display_name": "11yKLL",
     "username": "opju62",
     "user_id": "4432479518",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.455433,
-    "game_duration_sec": 81949.96909070015,
-    "updated_at": "2026-04-22T17:47:39.455442+00:00"
+    "status_type": 1,
+    "status_text": "🟢 Online",
+    "last_online_ts": 1777350820.596537,
+    "game_duration_sec": 177051.53438043594,
+    "updated_at": "2026-04-28T04:33:40.596539+00:00"
   },
   "2246536508": {
     "display_name": "Mighty_E",
     "username": "DOUBLEEVBOBO",
     "user_id": "2246536508",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.455828,
-    "game_duration_sec": 213202.90206980705,
-    "updated_at": "2026-04-22T17:47:39.455832+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777315721.405947,
+    "game_duration_sec": 380678.8804266453,
+    "updated_at": "2026-04-28T04:33:40.596671+00:00"
   },
   "5563457590": {
     "display_name": "zeey9031",
@@ -1357,7 +1357,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.456364+00:00"
+    "updated_at": "2026-04-28T04:33:40.596799+00:00"
   },
   "9421131520": {
     "display_name": "Meehay",
@@ -1367,7 +1367,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.456890+00:00"
+    "updated_at": "2026-04-28T04:33:40.596934+00:00"
   },
   "8726789394": {
     "display_name": "Aa25412218",
@@ -1377,17 +1377,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.457280+00:00"
+    "updated_at": "2026-04-28T04:33:40.597073+00:00"
   },
   "5570694998": {
     "display_name": "6767",
     "username": "ffhh751",
     "user_id": "5570694998",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776869080.316543,
-    "game_duration_sec": 61481.348534822464,
-    "updated_at": "2026-04-22T17:47:39.457677+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.597205,
+    "game_duration_sec": 96052.82107281685,
+    "updated_at": "2026-04-28T04:33:40.597208+00:00"
   },
   "4918594665": {
     "display_name": "YAAI",
@@ -1397,7 +1397,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.458202+00:00"
+    "updated_at": "2026-04-28T04:33:40.597348+00:00"
   },
   "8399624061": {
     "display_name": "senka",
@@ -1407,7 +1407,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.458738+00:00"
+    "updated_at": "2026-04-28T04:33:40.597479+00:00"
   },
   "1759625962": {
     "display_name": "Yume",
@@ -1417,7 +1417,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.459324+00:00"
+    "updated_at": "2026-04-28T04:33:40.597606+00:00"
   },
   "1905202678": {
     "display_name": "FordKG2310",
@@ -1427,7 +1427,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776843999.232058,
     "game_duration_sec": 10000.17154622078,
-    "updated_at": "2026-04-22T17:47:39.459834+00:00"
+    "updated_at": "2026-04-28T04:33:40.597735+00:00"
   },
   "9138714109": {
     "display_name": "1uookjl012",
@@ -1437,17 +1437,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.460369+00:00"
+    "updated_at": "2026-04-28T04:33:40.597865+00:00"
   },
   "3950042190": {
     "display_name": "Noobby",
     "username": "Nutty_2315",
     "user_id": "3950042190",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776869737.15875,
-    "game_duration_sec": 171556.2065165043,
-    "updated_at": "2026-04-22T17:47:39.460847+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.598004,
+    "game_duration_sec": 406200.08550167084,
+    "updated_at": "2026-04-28T04:33:40.598008+00:00"
   },
   "9324149428": {
     "display_name": "KAISER",
@@ -1457,7 +1457,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.461249+00:00"
+    "updated_at": "2026-04-28T04:33:40.598142+00:00"
   },
   "2621830067": {
     "display_name": "hhisk25",
@@ -1465,9 +1465,9 @@
     "user_id": "2621830067",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776817808.32614,
-    "game_duration_sec": 9855.950587749481,
-    "updated_at": "2026-04-22T17:47:39.461658+00:00"
+    "last_online_ts": 1777133369.74915,
+    "game_duration_sec": 15498.980729818344,
+    "updated_at": "2026-04-28T04:33:40.598279+00:00"
   },
   "2892828559": {
     "display_name": "keenanboosh1",
@@ -1475,9 +1475,9 @@
     "user_id": "2892828559",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776675853.480088,
-    "game_duration_sec": 478.7655391693115,
-    "updated_at": "2026-04-22T17:47:39.462225+00:00"
+    "last_online_ts": 1777250504.24929,
+    "game_duration_sec": 5177.769753932953,
+    "updated_at": "2026-04-28T04:33:40.598409+00:00"
   },
   "5774311541": {
     "display_name": "audseet",
@@ -1485,9 +1485,9 @@
     "user_id": "5774311541",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776617771.27717,
-    "game_duration_sec": 2959.383708715439,
-    "updated_at": "2026-04-22T17:47:39.463030+00:00"
+    "last_online_ts": 1777188240.454354,
+    "game_duration_sec": 6064.539830684662,
+    "updated_at": "2026-04-28T04:33:40.598545+00:00"
   },
   "256888208": {
     "display_name": "SkizzTVBP",
@@ -1495,19 +1495,19 @@
     "user_id": "256888208",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776873877.993659,
-    "game_duration_sec": 103230.82281422615,
-    "updated_at": "2026-04-22T17:47:39.463444+00:00"
+    "last_online_ts": 1777310137.652406,
+    "game_duration_sec": 216946.52057814598,
+    "updated_at": "2026-04-28T04:33:40.598679+00:00"
   },
   "5023724350": {
-    "display_name": "Dean_DookXD123",
+    "display_name": "Official_Leetial",
     "username": "Mizuku_Amvs",
     "user_id": "5023724350",
     "status_type": 2,
     "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.463886,
-    "game_duration_sec": 222770.20876979828,
-    "updated_at": "2026-04-22T17:47:39.463894+00:00"
+    "last_online_ts": 1777350820.598816,
+    "game_duration_sec": 490056.53444480896,
+    "updated_at": "2026-04-28T04:33:40.598819+00:00"
   },
   "9111164397": {
     "display_name": "Peach_10147",
@@ -1517,7 +1517,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.464397+00:00"
+    "updated_at": "2026-04-28T04:33:40.598970+00:00"
   },
   "7095715529": {
     "display_name": "Namineko",
@@ -1525,9 +1525,9 @@
     "user_id": "7095715529",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776833182.886266,
-    "game_duration_sec": 61591.21440386772,
-    "updated_at": "2026-04-22T17:47:39.465079+00:00"
+    "last_online_ts": 1777297138.793157,
+    "game_duration_sec": 91523.59558057785,
+    "updated_at": "2026-04-28T04:33:40.599127+00:00"
   },
   "5256737577": {
     "display_name": "Patiphon",
@@ -1537,7 +1537,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1775934345.934107,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.465506+00:00"
+    "updated_at": "2026-04-28T04:33:40.599296+00:00"
   },
   "8780815596": {
     "display_name": "ksjsbsh05",
@@ -1547,7 +1547,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.466036+00:00"
+    "updated_at": "2026-04-28T04:33:40.599495+00:00"
   },
   "2934788018": {
     "display_name": "pmaster3012",
@@ -1555,9 +1555,9 @@
     "user_id": "2934788018",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776871478.056605,
-    "game_duration_sec": 10474.748492240906,
-    "updated_at": "2026-04-22T17:47:39.466689+00:00"
+    "last_online_ts": 1777342060.486548,
+    "game_duration_sec": 27516.59493470192,
+    "updated_at": "2026-04-28T04:33:40.599676+00:00"
   },
   "8231025704": {
     "display_name": "GUEST1337",
@@ -1565,9 +1565,9 @@
     "user_id": "8231025704",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776752528.559682,
+    "last_online_ts": 1776955222.301241,
     "game_duration_sec": 37249.08287382126,
-    "updated_at": "2026-04-22T17:47:39.467267+00:00"
+    "updated_at": "2026-04-28T04:33:40.599857+00:00"
   },
   "8400863280": {
     "display_name": "WERT_1234019",
@@ -1577,7 +1577,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.467821+00:00"
+    "updated_at": "2026-04-28T04:33:40.600044+00:00"
   },
   "3952111701": {
     "display_name": "Kuy",
@@ -1585,9 +1585,9 @@
     "user_id": "3952111701",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776442817.991181,
-    "game_duration_sec": 1678.217184305191,
-    "updated_at": "2026-04-22T17:47:39.468524+00:00"
+    "last_online_ts": 1777289054.336677,
+    "game_duration_sec": 5061.158750295639,
+    "updated_at": "2026-04-28T04:33:40.600225+00:00"
   },
   "8656662021": {
     "display_name": "fah12963",
@@ -1597,7 +1597,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.469078+00:00"
+    "updated_at": "2026-04-28T04:33:40.600419+00:00"
   },
   "8507003188": {
     "display_name": "Marshamellow6948",
@@ -1607,7 +1607,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.469699+00:00"
+    "updated_at": "2026-04-28T04:33:40.600599+00:00"
   },
   "8232581889": {
     "display_name": "HAMYAIMACK56",
@@ -1617,7 +1617,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.470247+00:00"
+    "updated_at": "2026-04-28T04:33:40.600799+00:00"
   },
   "3390239041": {
     "display_name": "EDTDDTO",
@@ -1627,7 +1627,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.470755+00:00"
+    "updated_at": "2026-04-28T04:33:40.600971+00:00"
   },
   "5864710094": {
     "display_name": "vallen",
@@ -1637,7 +1637,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.471289+00:00"
+    "updated_at": "2026-04-28T04:33:40.601130+00:00"
   },
   "6130340696": {
     "display_name": "Neoshire",
@@ -1647,7 +1647,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.471868+00:00"
+    "updated_at": "2026-04-28T04:33:40.601284+00:00"
   },
   "343619129": {
     "display_name": "PondKunCh",
@@ -1655,9 +1655,9 @@
     "user_id": "343619129",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776821350.672668,
+    "last_online_ts": 1777293033.151273,
     "game_duration_sec": 11217.602147817612,
-    "updated_at": "2026-04-22T17:47:39.472501+00:00"
+    "updated_at": "2026-04-28T04:33:40.601436+00:00"
   },
   "8361034864": {
     "display_name": "thething20012",
@@ -1667,7 +1667,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.473027+00:00"
+    "updated_at": "2026-04-28T04:33:40.601591+00:00"
   },
   "5138916504": {
     "display_name": "Cherry",
@@ -1677,7 +1677,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.473592+00:00"
+    "updated_at": "2026-04-28T04:33:40.601745+00:00"
   },
   "8347124212": {
     "display_name": "Kuykuy_1234887",
@@ -1687,17 +1687,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.474183+00:00"
+    "updated_at": "2026-04-28T04:33:40.601897+00:00"
   },
   "5361461748": {
     "display_name": "IbukiCh",
     "username": "ibukiDream1",
     "user_id": "5361461748",
-    "status_type": 0,
-    "status_text": "🔴 Offline",
-    "last_online_ts": 1776878200.446808,
-    "game_duration_sec": 216714.49826860428,
-    "updated_at": "2026-04-22T17:47:39.474798+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.602053,
+    "game_duration_sec": 520768.8122370243,
+    "updated_at": "2026-04-28T04:33:40.602056+00:00"
   },
   "1703282555": {
     "display_name": "MrP",
@@ -1705,9 +1705,9 @@
     "user_id": "1703282555",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776876755.15899,
-    "game_duration_sec": 168379.7857928276,
-    "updated_at": "2026-04-22T17:47:39.475304+00:00"
+    "last_online_ts": 1777312000.705306,
+    "game_duration_sec": 307760.3816604614,
+    "updated_at": "2026-04-28T04:33:40.602202+00:00"
   },
   "4303913408": {
     "display_name": "SoMe_XD",
@@ -1715,9 +1715,9 @@
     "user_id": "4303913408",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776858949.932417,
-    "game_duration_sec": 125010.08265209198,
-    "updated_at": "2026-04-22T17:47:39.475956+00:00"
+    "last_online_ts": 1777314458.489029,
+    "game_duration_sec": 154152.05476117134,
+    "updated_at": "2026-04-28T04:33:40.602364+00:00"
   },
   "8396495181": {
     "display_name": "vosspp12",
@@ -1727,7 +1727,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.476467+00:00"
+    "updated_at": "2026-04-28T04:33:40.602547+00:00"
   },
   "3398303021": {
     "display_name": "Tsubasa",
@@ -1737,7 +1737,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.476950+00:00"
+    "updated_at": "2026-04-28T04:33:40.602727+00:00"
   },
   "7366459304": {
     "display_name": "Waldo1585",
@@ -1747,7 +1747,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.477452+00:00"
+    "updated_at": "2026-04-28T04:33:40.602882+00:00"
   },
   "7888084760": {
     "display_name": "Thez3ro",
@@ -1757,7 +1757,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.477950+00:00"
+    "updated_at": "2026-04-28T04:33:40.603059+00:00"
   },
   "4328463865": {
     "display_name": "naoya",
@@ -1767,7 +1767,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.478788+00:00"
+    "updated_at": "2026-04-28T04:33:40.603209+00:00"
   },
   "7099536306": {
     "display_name": "THETKPATPAT",
@@ -1777,17 +1777,17 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.480287+00:00"
+    "updated_at": "2026-04-28T04:33:40.603354+00:00"
   },
   "2410133635": {
     "display_name": "aplolo",
     "username": "aplolot",
     "user_id": "2410133635",
-    "status_type": 2,
-    "status_text": "🎮 กำลังเล่นเกม",
-    "last_online_ts": 1776880059.481044,
-    "game_duration_sec": 166206.98460054398,
-    "updated_at": "2026-04-22T17:47:39.481076+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777306001.752147,
+    "game_duration_sec": 205875.48181772232,
+    "updated_at": "2026-04-28T04:33:40.603499+00:00"
   },
   "5486329914": {
     "display_name": "G_4",
@@ -1797,7 +1797,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.481699+00:00"
+    "updated_at": "2026-04-28T04:33:40.603642+00:00"
   },
   "2497450301": {
     "display_name": "1x1x1x1egg",
@@ -1807,7 +1807,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776247735.420745,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.482134+00:00"
+    "updated_at": "2026-04-28T04:33:40.603784+00:00"
   },
   "8178925878": {
     "display_name": "Abbie",
@@ -1817,7 +1817,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.482533+00:00"
+    "updated_at": "2026-04-28T04:33:40.603929+00:00"
   },
   "6199901411": {
     "display_name": "3nnn108",
@@ -1827,7 +1827,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.482870+00:00"
+    "updated_at": "2026-04-28T04:33:40.604088+00:00"
   },
   "1034132875": {
     "display_name": "DEKU",
@@ -1837,7 +1837,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.483221+00:00"
+    "updated_at": "2026-04-28T04:33:40.604227+00:00"
   },
   "4735184013": {
     "display_name": "Spiegelei",
@@ -1847,7 +1847,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 1776101098.062834,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.483685+00:00"
+    "updated_at": "2026-04-28T04:33:40.604379+00:00"
   },
   "8251485650": {
     "display_name": "radenkertadiwana",
@@ -1857,7 +1857,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.484132+00:00"
+    "updated_at": "2026-04-28T04:33:40.604521+00:00"
   },
   "125005104": {
     "display_name": "オマリユミ",
@@ -1865,9 +1865,9 @@
     "user_id": "125005104",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776878200.452975,
-    "game_duration_sec": 126254.6234793663,
-    "updated_at": "2026-04-22T17:47:39.484593+00:00"
+    "last_online_ts": 1777342121.032461,
+    "game_duration_sec": 137790.10818886757,
+    "updated_at": "2026-04-28T04:33:40.604660+00:00"
   },
   "3289382663": {
     "display_name": "Tomyumkung777",
@@ -1875,9 +1875,9 @@
     "user_id": "3289382663",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776863557.067503,
-    "game_duration_sec": 60335.84046339989,
-    "updated_at": "2026-04-22T17:47:39.485182+00:00"
+    "last_online_ts": 1777277923.435596,
+    "game_duration_sec": 66103.32459425926,
+    "updated_at": "2026-04-28T04:33:40.604845+00:00"
   },
   "4380572023": {
     "display_name": "Slappy",
@@ -1885,9 +1885,9 @@
     "user_id": "4380572023",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776861700.386638,
-    "game_duration_sec": 492.8967318534851,
-    "updated_at": "2026-04-22T17:47:39.485475+00:00"
+    "last_online_ts": 1776918377.903505,
+    "game_duration_sec": 853.4379336833954,
+    "updated_at": "2026-04-28T04:33:40.605007+00:00"
   },
   "4867347548": {
     "display_name": "Robot114803",
@@ -1897,7 +1897,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.485830+00:00"
+    "updated_at": "2026-04-28T04:33:40.605154+00:00"
   },
   "4702192543": {
     "display_name": "KhaoTom_Ghai",
@@ -1905,9 +1905,9 @@
     "user_id": "4702192543",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776871118.37163,
-    "game_duration_sec": 112150.30684137344,
-    "updated_at": "2026-04-22T17:47:39.486161+00:00"
+    "last_online_ts": 1777349618.456243,
+    "game_duration_sec": 197220.67912745476,
+    "updated_at": "2026-04-28T04:33:40.605298+00:00"
   },
   "2047841708": {
     "display_name": "idhdhdhwihd",
@@ -1915,19 +1915,19 @@
     "user_id": "2047841708",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776851120.497641,
-    "game_duration_sec": 2390.5520832538605,
-    "updated_at": "2026-04-22T17:47:39.486567+00:00"
+    "last_online_ts": 1777289957.245125,
+    "game_duration_sec": 3602.4304983615875,
+    "updated_at": "2026-04-28T04:33:40.605443+00:00"
   },
   "7387302692": {
     "display_name": "y13",
     "username": "SunXTun1862",
     "user_id": "7387302692",
-    "status_type": 1,
-    "status_text": "🟢 Online",
-    "last_online_ts": 1776880059.486972,
-    "game_duration_sec": 10471.64509677887,
-    "updated_at": "2026-04-22T17:47:39.486977+00:00"
+    "status_type": 0,
+    "status_text": "🔴 Offline",
+    "last_online_ts": 1777305580.720916,
+    "game_duration_sec": 30439.24915766716,
+    "updated_at": "2026-04-28T04:33:40.605607+00:00"
   },
   "3367038207": {
     "display_name": "SUS",
@@ -1935,9 +1935,9 @@
     "user_id": "3367038207",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776865781.377669,
-    "game_duration_sec": 11697.481886863708,
-    "updated_at": "2026-04-22T17:47:39.487533+00:00"
+    "last_online_ts": 1777233768.367594,
+    "game_duration_sec": 14038.404175043106,
+    "updated_at": "2026-04-28T04:33:40.605758+00:00"
   },
   "2649643235": {
     "display_name": "Saygoodbye",
@@ -1947,7 +1947,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.487998+00:00"
+    "updated_at": "2026-04-28T04:33:40.605916+00:00"
   },
   "3208276008": {
     "display_name": "empty",
@@ -1955,19 +1955,19 @@
     "user_id": "3208276008",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776590065.012455,
-    "game_duration_sec": 19012.058429718018,
-    "updated_at": "2026-04-22T17:47:39.488528+00:00"
+    "last_online_ts": 1777193369.412536,
+    "game_duration_sec": 37785.93751168251,
+    "updated_at": "2026-04-28T04:33:40.606087+00:00"
   },
   "3977556907": {
     "display_name": "ufhnsg",
     "username": "ufhnsg",
     "user_id": "3977556907",
-    "status_type": 1,
-    "status_text": "🟢 Online",
-    "last_online_ts": 1776880059.489025,
-    "game_duration_sec": 116389.6864926815,
-    "updated_at": "2026-04-22T17:47:39.489035+00:00"
+    "status_type": 2,
+    "status_text": "🎮 กำลังเล่นเกม",
+    "last_online_ts": 1777350820.606241,
+    "game_duration_sec": 274719.8469619751,
+    "updated_at": "2026-04-28T04:33:40.606245+00:00"
   },
   "7848153877": {
     "display_name": "thething1982",
@@ -2017,7 +2017,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.393600+00:00"
+    "updated_at": "2026-04-28T04:33:40.567939+00:00"
   },
   "7111186883": {
     "display_name": "Loud9463",
@@ -2027,7 +2027,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.394550+00:00"
+    "updated_at": "2026-04-28T04:33:40.568136+00:00"
   },
   "9947503426": {
     "display_name": "llopps40",
@@ -2037,7 +2037,7 @@
     "status_text": "🔴 Offline",
     "last_online_ts": 0.0,
     "game_duration_sec": 0.0,
-    "updated_at": "2026-04-22T17:47:39.395003+00:00"
+    "updated_at": "2026-04-28T04:33:40.568322+00:00"
   },
   "6091152802": {
     "display_name": "Koi",
@@ -2045,8 +2045,8 @@
     "user_id": "6091152802",
     "status_type": 0,
     "status_text": "🔴 Offline",
-    "last_online_ts": 1776833424.783605,
-    "game_duration_sec": 23198.33997964859,
-    "updated_at": "2026-04-22T17:47:39.395430+00:00"
+    "last_online_ts": 1777302293.041411,
+    "game_duration_sec": 33331.70687794685,
+    "updated_at": "2026-04-28T04:33:40.568503+00:00"
   }
 }

@@ -384,6 +384,7 @@ class ServerLogger(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ) -> None:
+        if member.bot: return
         if not self._rl("voice", member.id):
             return
 

@@ -1780,8 +1780,17 @@ class Utility(commands.Cog):
                 except: pass
 
     async def _upload_to_catbox(self, filepath: str, filename: str) -> str | None:
-        """อัพโหลดไฟล์ไปยัง catbox.moe (ฟรี ไม่ต้องสมัคร รองรับถึง 200 MB)
-        คืนค่า URL ถ้าสำเร็จ หรือ None ถ้าล้มเหลว"""
+        """อัพโหลดไฟล์ไปยัง catbox.moe (จำกัด 200MB)"""
+        if not os.path.exists(filepath):
+            return None
+            
+        filesize = os.path.getsize(filepath)
+        
+        # ถ้าไฟล์ใหญ่กว่า 200MB ให้ลองไป Gofile เลย
+        if filesize > 195 * 1024 * 1024:
+            logger.info(f"File {filename} is too large for Catbox ({filesize} bytes), trying Gofile...")
+            return await self._upload_to_gofile(filepath)
+
         try:
             async with aiohttp.ClientSession() as session:
                 with open(filepath, 'rb') as f:
@@ -1801,6 +1810,150 @@ class Utility(commands.Cog):
                         logger.warning(f"Catbox upload failed: HTTP {resp.status}")
         except Exception as e:
             logger.warning(f"Catbox upload error: {e}")
+            
+        # ถ้า Catbox พลาด ให้ลอง Gofile เป็นแผนสำรอง
+        return await self._upload_to_gofile(filepath)
+
+    async def _upload_to_gofile(self, filepath: str) -> str | None:
+        """อัปโหลดไฟล์ไปยัง Gofile.io (รองรับไฟล์ใหญ่มาก ฟรีถึง 10GB+)"""
+        if not os.path.exists(filepath):
+            return None
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1. รับ Server ที่ดีที่สุด
+                async with session.get('https://api.gofile.io/getServer', timeout=10) as resp:
+                    if resp.status != 200:
+                        return await self._upload_to_pixeldrain(filepath)
+                    data = await resp.json()
+                    if data.get('status') != 'ok':
+                        return await self._upload_to_pixeldrain(filepath)
+                    server = data['data']['server']
+
+                # 2. อัปโหลดไฟล์
+                filename = os.path.basename(filepath)
+                with open(filepath, 'rb') as f:
+                    form = aiohttp.FormData()
+                    form.add_field('file', f, filename=filename)
+                    
+                    upload_url = f"https://{server}.gofile.io/uploadFile"
+                    async with session.post(upload_url, data=form, timeout=aiohttp.ClientTimeout(total=900)) as resp:
+                        if resp.status == 200:
+                            res_data = await resp.json()
+                            if res_data.get('status') == 'ok':
+                                return res_data['data']['downloadPage']
+                        logger.warning(f"Gofile upload failed: HTTP {resp.status}")
+        except Exception as e:
+            logger.warning(f"Gofile upload error: {e}")
+        
+        # สุดท้ายลอง Pixeldrain
+        result = await self._upload_to_pixeldrain(filepath)
+        if result: return result
+        
+        # ถ้ายังไม่ได้ ให้ลอง ToffeeShare (ถ้าไฟล์ใหญ่จริง ๆ)
+        return await self._upload_to_toffeeshare(filepath)
+
+    async def _upload_to_pixeldrain(self, filepath: str) -> str | None:
+        """อัปโหลดไฟล์ไปยัง Pixeldrain (รองรับถึง 20GB!)"""
+        if not os.path.exists(filepath):
+            return None
+            
+        try:
+            url = "https://pixeldrain.com/api/file"
+            filename = os.path.basename(filepath)
+            async with aiohttp.ClientSession() as session:
+                with open(filepath, 'rb') as f:
+                    data = aiohttp.FormData()
+                    data.add_field('file', f, filename=filename)
+                    async with session.post(url, data=data, timeout=aiohttp.ClientTimeout(total=900)) as resp:
+                        if resp.status == 201 or resp.status == 200:
+                            res = await resp.json()
+                            if res.get('success'):
+                                return f"https://pixeldrain.com/u/{res['id']}"
+                        logger.warning(f"Pixeldrain failed: HTTP {resp.status}")
+        except Exception as e:
+            logger.warning(f"Pixeldrain error: {e}")
+        return None
+
+    async def _upload_to_toffeeshare(self, filepath: str) -> str | None:
+        """อัปโหลดไฟล์ไปยัง ToffeeShare (P2P - บอทต้องเปิดค้างไว้เพื่อส่งไฟล์)"""
+        if not os.path.exists(filepath):
+            return None
+            
+        logger.info(f"Starting ToffeeShare upload for {filepath}...")
+        script_path = os.path.join(os.getcwd(), "scripts", "toffeeshare_upload.py")
+        if not os.path.exists(script_path):
+            logger.warning("ToffeeShare script not found")
+            return None
+
+        try:
+            # รันเป็น Subprocess เพื่อไม่ให้บล็อก
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, script_path, filepath,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # เก็บ process ไว้เผื่อปิดบอท
+            if hasattr(self.bot, 'active_processes'):
+                self.bot.active_processes.add(proc)
+            
+            # รออ่าน Link จาก stdout (รูปแบบ LINK:https://toffeeshare.com/...)
+            link = None
+            timeout = 45 # รอสูงสุด 45 วินาที
+            start_time = asyncio.get_event_loop().time()
+            
+            while asyncio.get_event_loop().time() - start_time < timeout:
+                line = await proc.stdout.readline()
+                if not line: break
+                line_str = line.decode().strip()
+                if line_str.startswith("LINK:"):
+                    link = line_str.replace("LINK:", "").strip()
+                    break
+                elif line_str.startswith("ERROR:"):
+                    logger.error(f"ToffeeShare script error: {line_str}")
+                    break
+            
+            if link:
+                logger.info(f"ToffeeShare link generated: {link}")
+                return f"{link} (⚠️ บอทต้องเปิดอยู่เพื่อส่งไฟล์นี้)"
+            else:
+                # ถ้าไม่ได้ลิงก์ในเวลาที่กำหนด ให้ปล่อย proc รันไปเผื่อมันช้า แต่เราคืนค่าพลาด
+                logger.warning("ToffeeShare link generation timed out")
+                
+        except Exception as e:
+            logger.error(f"ToffeeShare upload failed: {e}")
+            
+        return None
+
+    async def _download_via_cobalt(self, url: str) -> dict | None:
+        """ใช้ Cobalt API ในการดึงข้อมูลดาวน์โหลด (เป็นทางเลือกสำหรับ TikTok Photo หรือกรณี ydlp พลาด)"""
+        api_url = "https://api.cobalt.tools/api/json"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "url": url,
+            "vQuality": "1080",
+            "filenameStyle": "classic",
+            "downloadMode": "auto" # Force auto mode for best compatibility
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    else:
+                        # ลอง fallback ไปอีก endpoint ถ้าอันแรกไม่ติด
+                        alt_url = "https://cobalt.tools/api/json"
+                        async with session.post(alt_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp2:
+                            if resp2.status == 200:
+                                return await resp2.json()
+                        logger.warning(f"Cobalt API failed with status {resp.status}")
+        except Exception as e:
+            logger.warning(f"Cobalt API error: {e}")
         return None
 
     async def _download_clip_core(self, interaction: discord.Interaction, url: str, mode: str = "mp4", 
@@ -1833,42 +1986,52 @@ class Utility(commands.Cog):
         is_tiktok_photo = bool(re.search(r'tiktok\.com/.+/photo/', url))
         if is_tiktok_photo:
             try:
-                await interaction.edit_original_response(content="🖼️ ตรวจพบ TikTok Photo/Slideshow กำลังดาวน์โหลดรูปภาพ...")
-                
-                # ดึง video/photo ID จาก URL
-                photo_id_match = re.search(r'/photo/(\d+)', url)
-                if not photo_id_match:
-                    return await interaction.edit_original_response(content="❌ ไม่สามารถดึง Photo ID จาก URL ได้")
-                photo_id = photo_id_match.group(1)
-                
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Referer': 'https://www.tiktok.com/',
-                }
-                
-                # ใช้ TikTok API endpoint สำหรับดึงข้อมูลโพสต์
-                api_url = f"https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/feed/?aweme_id={photo_id}&version_name=26.1.3&version_code=260103&build_number=26.1.3&manifest_version_code=260103"
+                await interaction.edit_original_response(content="🖼️ ตรวจพบ TikTok Photo/Slideshow กำลังเตรียมดึงรูปภาพ...")
                 
                 image_urls = []
-                title = f"tiktok_photo_{photo_id}"
+                title = f"tiktok_photo_{int(datetime.now().timestamp())}"
                 
-                async with aiohttp.ClientSession() as session:
-                    try:
-                        async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                            if resp.status == 200:
-                                data = await resp.json(content_type=None)
-                                aweme_list = data.get('aweme_list', [])
-                                if aweme_list:
-                                    aweme = aweme_list[0]
-                                    title = aweme.get('desc', title) or title
-                                    image_post = aweme.get('image_post_info', {})
-                                    images = image_post.get('images', [])
-                                    for img in images:
-                                        display_list = img.get('display_image', {}).get('url_list', [])
-                                        if display_list:
-                                            image_urls.append(display_list[0])
-                    except Exception as api_err:
-                        logger.warning(f"TikTok API failed: {api_err}")
+                # --- [NEW] พยายามใช้ Cobalt API ก่อน (ตามคำขอ) ---
+                await interaction.edit_original_response(content="🖼️ ตรวจพบ TikTok Photo/Slideshow กำลังใช้ Cobalt API ดึงรูปภาพ...")
+                cobalt_data = await self._download_via_cobalt(url)
+                if cobalt_data and cobalt_data.get('status') == 'picker':
+                    picker = cobalt_data.get('picker', [])
+                    image_urls = [item.get('url') for item in picker if item.get('type') == 'image' and item.get('url')]
+                    if image_urls:
+                        logger.info(f"Cobalt found {len(image_urls)} images for TikTok")
+                
+                # --- หาก Cobalt ไม่ได้ผล หรือไม่มีรูป ให้ใช้ระบบ Scraper เดิมเป็น Fallback ---
+                if not image_urls:
+                    await interaction.edit_original_response(content="🖼️ Cobalt API ไม่พบรูปภาพ กำลังใช้ระบบสำรองดึงรูปภาพ...")
+                    # ดึง video/photo ID จาก URL
+                    photo_id_match = re.search(r'/photo/(\d+)', url)
+                    photo_id = photo_id_match.group(1) if photo_id_match else "unknown"
+                    
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'Referer': 'https://www.tiktok.com/',
+                    }
+                    
+                    async with aiohttp.ClientSession() as session:
+                        try:
+                            api_url = f"https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/feed/?aweme_id={photo_id}&version_name=26.1.3&version_code=260103&build_number=26.1.3&manifest_version_code=260103"
+                            async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json(content_type=None)
+                                    aweme_list = data.get('aweme_list', [])
+                                    aweme = aweme_list[0] if aweme_list else None
+                                    if aweme:
+                                        title = aweme.get('desc', title) or title
+                                        image_post = aweme.get('image_post_info') or {}
+                                        images = image_post.get('images', [])
+                                        for img in images:
+                                            display_list = img.get('display_image', {}).get('url_list', [])
+                                            if display_list:
+                                                image_urls.append(display_list[0])
+                                    else:
+                                        logger.warning("TikTok API returned empty aweme_list")
+                        except Exception as api_err:
+                            logger.warning(f"TikTok API failed: {api_err}")
 
                     # Fallback: ลอง scrape หน้าเว็บถ้า API ไม่ได้
                     if not image_urls:

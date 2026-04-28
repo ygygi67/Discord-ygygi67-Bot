@@ -336,9 +336,13 @@ class YoutubeSpyCog(commands.Cog):
             last_data = copy.deepcopy(current_snapshot)
             sql_data = []
 
-            targets = [{'input': c, 'type': 'MY'} for c in MY_CHANNELS] + [{'input': c, 'type': 'SPY'} for c in SPY_CHANNELS]
-            
+            targets = [{'type': 'MY', 'input': ch} for ch in MY_CHANNELS] + [{'type': 'SPY', 'input': ch} for ch in SPY_CHANNELS]
+
             for idx, target in enumerate(targets, 1):
+                if self.bot.is_closed():
+                    logger.info("🛑 Bot is closing, interrupting scan...")
+                    break
+                    
                 data = get_channel_data(target['input'])
                 if not data: continue
                 

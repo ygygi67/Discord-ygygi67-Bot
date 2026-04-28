@@ -173,6 +173,7 @@ class Stats(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
+        if member.bot: return
         uid = str(member.id)
         # Defensive: ensure 'names' exists
         if "names" not in self.stats:

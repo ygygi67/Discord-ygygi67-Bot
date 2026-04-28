@@ -136,10 +136,10 @@ class Status(commands.Cog):
         )
 
         if unexpected_event:
-            embed.set_author(name="🚨 ตรวจพบการหยุดทำงานที่ไม่ปกติในครั้งล่าสุด", icon_url="https://i.imgur.com/vL95W1L.png")
+            embed.set_author(name="🚨 ตรวจพบการหยุดทำงานที่ไม่ปกติในครั้งล่าสุด")
             embed.color = 0xff4757 # Bright red for security event
         elif is_recovering:
-            embed.set_author(name="🛡️ ระบบเพิ่งฟื้นฟูจากสภาวะเครือข่ายขัดข้อง", icon_url="https://i.imgur.com/8N8uE6A.png")
+            embed.set_author(name="🛡️ ระบบเพิ่งฟื้นฟูจากสภาวะเครือข่ายขัดข้อง")
             embed.color = 0xf1c40f # Yellow for recovery status
         else:
             embed.color = 0x2b2d31 # Normal midnight theme

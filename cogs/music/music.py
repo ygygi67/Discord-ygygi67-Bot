@@ -431,6 +431,7 @@ class Music(commands.Cog):
         # Distributed Mode Support
         self.shared_queue = None
         self.pending_downloads = {}
+        self.auto_resume_task = None
         
         try:
             from core.distributed_config import is_master, ENABLE_DISTRIBUTED_MUSIC
@@ -497,108 +498,130 @@ class Music(commands.Cog):
 
     async def cog_load(self):
         """Auto-resume playback when cog loads or bot restarts"""
-        asyncio.create_task(self.auto_resume_on_load())
+        self._resume_running = False
+        self.auto_resume_task = asyncio.create_task(self.auto_resume_on_load())
+
+    async def cog_unload(self):
+        """Cancel ongoing tasks when cog unloads"""
+        if self.auto_resume_task:
+            self.auto_resume_task.cancel()
+            logger.info("[Music] Cancelled auto-resume task")
 
     async def auto_resume_on_load(self):
         """Internal method to handle the resume process"""
-        await self.bot.wait_until_ready()
-        # เพิ่มดีเลย์เพื่อให้แน่ใจว่า Cache ของกิลด์และแชแนลโหลดเสร็จสมบูรณ์จริงๆ
-        await asyncio.sleep(15) 
-        states = self.load_voice_states()
-
+        if getattr(self, "_resume_running", False):
+            return
+        self._resume_running = True
         
-        for g_id, state in states.items():
-            guild = self.bot.get_guild(int(g_id))
-            if not guild:
-                continue
+        try:
+            await self.bot.wait_until_ready()
+            # เพิ่มดีเลย์เพื่อให้แน่ใจว่า Cache ของกิลด์และแชแนลโหลดเสร็จสมบูรณ์จริงๆ
+            await asyncio.sleep(10) 
             
-            c_id = state.get('channel_id') if isinstance(state, dict) else state
-            if not c_id:
-                continue
-                
-            channel = guild.get_channel(c_id)
-            if not channel or not isinstance(channel, discord.VoiceChannel):
-                continue
-                
-            try:
-                # Check if already connected
-                vc = guild.voice_client
-                if not vc:
-                    # Connect to voice channel with retry
-                    for attempt in range(3):
-                        try:
-                            vc = await channel.connect(timeout=20.0, reconnect=True)
-                            logger.info(f"[AutoResume] Reconnected to {channel.name} in {guild.name}")
-                            break
-                        except Exception as ce:
-                            logger.warning(f"[AutoResume] Connect attempt {attempt+1} failed: {ce}")
-                            if attempt == 2:
-                                raise ce
-                            await asyncio.sleep(2)
-                else:
-                    logger.info(f"[AutoResume] Hijacking existing voice client in {guild.name}")
-                
-                if isinstance(state, dict):
-                    queue = self.get_queue(guild.id)
+            if getattr(self.bot, "_is_shutting_down", False):
+                return
+
+            states = self.load_voice_states()
+            
+            for g_id, state in states.items():
+                if getattr(self.bot, "_is_shutting_down", False):
+                    break
                     
-                    # Restore queue settings
-                    queue.loop_mode = state.get('loop', 'none')
-                    queue.shuffle_enabled = state.get('shuffle', False)
-                    queue.volume = state.get('volume', 1.0)
-                    queue.filters = state.get('filters', {"bassboost": False, "nightcore": False, "vaporwave": False})
-                    queue.text_channel_id = state.get('text_channel_id')
-                    queue.auto_play = state.get('auto_play', False)
-                    queue.is_afk = state.get('is_afk', False)
+                guild = self.bot.get_guild(int(g_id))
+                if not guild:
+                    continue
+                
+                c_id = state.get('channel_id') if isinstance(state, dict) else state
+                if not c_id:
+                    continue
                     
-                    # Restore queue tracks
-                    for t_data in state.get('queue', []):
-                        track = MusicTrack.from_dict(t_data, guild)
-                        if track:
-                            queue.tracks.append(track)
+                channel = guild.get_channel(c_id)
+                if not channel or not isinstance(channel, discord.VoiceChannel):
+                    continue
                     
-                    # Restore and resume current track
-                    curr_data = state.get('current_track')
-                    if curr_data:
-                        current_track = MusicTrack.from_dict(curr_data, guild)
-                        if current_track:
-                            # Restore requester
-                            requester_id = curr_data.get('requester_id')
-                            if requester_id:
-                                current_track.requester = guild.get_member(requester_id)
-                            
-                            # Calculate resume position
-                            elapsed = state.get('elapsed', 0)
-                            if elapsed > 5:  # Resume from 5 seconds before to avoid missing anything
-                                resume_pos = max(0, elapsed - 5)
-                            else:
-                                resume_pos = 0
-                            
-                            logger.info(f"[AutoResume] Resuming {current_track.title} from {resume_pos}s")
-                            
-                            # Set as current track and play from position
-                            queue.current_track = current_track
-                            await self.play_track(vc, current_track, seek=resume_pos)
-                            
-                            # Notify in text channel
-                            if queue.text_channel_id:
-                                text_channel = guild.get_channel(queue.text_channel_id)
-                                if text_channel:
-                                    embed = discord.Embed(
-                                        title="🔄 กลับมาเล่นต่อจากที่ค้างไว้",
-                                        description=f"**{current_track.title}**\n▶️ เริ่มที่: `{int(resume_pos//60)}:{int(resume_pos%60):02d}`",
-                                        color=discord.Color.blue()
-                                    )
-                                    await text_channel.send(embed=embed)
+                try:
+                    # Check if already connected
+                    vc = guild.voice_client
+                    if not vc:
+                        # Connect to voice channel with retry
+                        for attempt in range(3):
+                            try:
+                                vc = await channel.connect(timeout=20.0, reconnect=True)
+                                logger.info(f"[AutoResume] Reconnected to {channel.name} in {guild.name}")
+                                break
+                            except Exception as ce:
+                                logger.warning(f"[AutoResume] Connect attempt {attempt+1} failed: {ce}")
+                                if attempt == 2:
+                                    raise ce
+                                await asyncio.sleep(2)
                     else:
-                        # No current track but have queue - start playing queue
-                        if queue.tracks and not vc.is_playing():
-                            next_track = queue.get_next()
-                            if next_track:
-                                await self.play_track(vc, next_track)
-                                logger.info(f"[AutoResume] Started playing queue: {next_track.title}")
+                        logger.info(f"[AutoResume] Hijacking existing voice client in {guild.name}")
+                    
+                    if isinstance(state, dict):
+                        queue = self.get_queue(guild.id)
+                        
+                        # Restore queue settings
+                        queue.loop_mode = state.get('loop', 'none')
+                        queue.shuffle_enabled = state.get('shuffle', False)
+                        queue.volume = state.get('volume', 1.0)
+                        queue.filters = state.get('filters', {"bassboost": False, "nightcore": False, "vaporwave": False})
+                        queue.text_channel_id = state.get('text_channel_id')
+                        queue.auto_play = state.get('auto_play', False)
+                        queue.is_afk = state.get('is_afk', False)
+                        
+                        # Restore queue tracks
+                        for t_data in state.get('queue', []):
+                            track = MusicTrack.from_dict(t_data, guild)
+                            if track:
+                                queue.tracks.append(track)
+                        
+                        # Restore and resume current track
+                        curr_data = state.get('current_track')
+                        if curr_data:
+                            current_track = MusicTrack.from_dict(curr_data, guild)
+                            if current_track:
+                                # Restore requester
+                                requester_id = curr_data.get('requester_id')
+                                if requester_id:
+                                    current_track.requester = guild.get_member(requester_id)
                                 
-            except Exception as e:
-                logger.error(f"[AutoResume] Failed for {guild.name}: {e}")
+                                # Calculate resume position
+                                elapsed = state.get('elapsed', 0)
+                                if elapsed > 5:  # Resume from 5 seconds before to avoid missing anything
+                                    resume_pos = max(0, elapsed - 5)
+                                else:
+                                    resume_pos = 0
+                                
+                                logger.info(f"[AutoResume] Resuming {current_track.title} from {resume_pos}s")
+                                
+                                # Set as current track and play from position
+                                queue.current_track = current_track
+                                await self.play_track(vc, current_track, seek=resume_pos)
+                                
+                                # Notify in text channel
+                                if queue.text_channel_id:
+                                    text_channel = guild.get_channel(queue.text_channel_id)
+                                    if text_channel:
+                                        embed = discord.Embed(
+                                            title="🔄 กลับมาเล่นต่อจากที่ค้างไว้",
+                                            description=f"**{current_track.title}**\n▶️ เริ่มที่: `{int(resume_pos//60)}:{int(resume_pos%60):02d}`",
+                                            color=discord.Color.blue()
+                                        )
+                                        await text_channel.send(embed=embed)
+                        else:
+                            # No current track but have queue - start playing queue
+                            if queue.tracks and not vc.is_playing():
+                                next_track = queue.get_next()
+                                if next_track:
+                                    await self.play_track(vc, next_track)
+                                    logger.info(f"[AutoResume] Started playing queue: {next_track.title}")
+                                    
+                except Exception as e:
+                    logger.error(f"[AutoResume] Error resuming guild {g_id}: {e}")
+        except Exception as e:
+            logger.error(f"[AutoResume] Task failed: {e}")
+        finally:
+            self._resume_running = False
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -899,6 +922,51 @@ class Music(commands.Cog):
         await self.play_track(vc, queue.current_track, seek=max(0, elapsed))
         queue.is_refreshing = False
 
+    async def _process_playlist(self, interaction: discord.Interaction, query: str):
+        try:
+            ydl_opts = {'extract_flat': True, 'quiet': True, 'no_warnings': True}
+            with YoutubeDL(ydl_opts) as ydl:
+                info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(query, download=False))
+                
+            if not info or 'entries' not in info:
+                await interaction.followup.send("❌ ไม่พบเพลงในเพลย์ลิสต์")
+                return
+                
+            entries = info['entries']
+            await interaction.followup.send(f"✅ พบ {len(entries)} เพลง กำลังทยอยเพิ่มลงคิว...")
+            
+            queue = self.get_queue(interaction.guild.id)
+            added = 0
+            
+            for entry in entries:
+                if not entry.get('url') and not entry.get('id'): continue
+                
+                video_url = entry.get('url')
+                if not video_url: video_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                
+                track = await self.search_track(video_url)
+                if track:
+                    track.requester = interaction.user
+                    queue.add(track)
+                    added += 1
+                    
+                    if added == 1:
+                        vc = interaction.guild.voice_client
+                        if vc and not vc.is_playing() and not vc.is_paused():
+                            next_t = queue.get_next()
+                            if next_t:
+                                await self.play_track(vc, next_t)
+                                await self.send_now_playing(interaction.channel, next_t)
+                                
+            if added > 0:
+                await interaction.followup.send(f"✅ เพิ่มเพลย์ลิสต์เสร็จสิ้น ({added} เพลง)")
+            else:
+                await interaction.followup.send("❌ ไม่สามารถเพิ่มเพลงจากเพลย์ลิสต์ได้")
+                
+        except Exception as e:
+            logger.error(f"Playlist error: {e}")
+            await interaction.followup.send("❌ เกิดข้อผิดพลาดในการโหลดเพลย์ลิสต์")
+
     @app_commands.command(name="เล่น", description="เล่นเพลงจากชื่อหรือลิงก์")
     @app_commands.describe(query="ชื่อเพลงหรือลิงก์", mode="เลือกโหมดการเล่น (สำหรับคาราโอเกะระบบจะโหลดและแยกเสียงร้องให้อัตโนมัติ)")
     @app_commands.choices(mode=[
@@ -915,7 +983,7 @@ class Music(commands.Cog):
         if not vc: vc = await interaction.user.voice.channel.connect()
 
         if 'playlist' in query or '&list=' in query:
-            await interaction.followup.send("🎶 กำลังทยอยเพิ่มเพลย์ลิสต์...")
+            await interaction.followup.send("🎶 กำลังโหลดเพลย์ลิสต์...")
             asyncio.create_task(self._process_playlist(interaction, query))
             return
 
@@ -927,15 +995,13 @@ class Music(commands.Cog):
         queue = self.get_queue(interaction.guild.id)
         pos = queue.add(track)
         
-        if not vc.is_playing():
+        if not vc.is_playing() and not vc.is_paused():
             next_t = queue.get_next()
             await self.play_track(vc, next_t)
             await self.send_now_playing(interaction.channel, next_t)
-            with YoutubeDL({'extract_flat': 'in_playlist', 'quiet': True}) as ydl:
-                return ydl.extract_info(query, download=False, process=False)
-            await interaction.response.send_message("⏭️ ข้ามแล้ว")
+            await interaction.followup.send(f"▶️ กำลังเล่น: **{track.title}**")
         else:
-            await interaction.response.send_message("❌ ไม่มีเพลงเล่นอยู่", ephemeral=True)
+            await interaction.followup.send(f"✅ เพิ่มลงคิวลำดับที่ {pos}: **{track.title}**")
 
     @app_commands.command(name="คิว", description="ดูคิวเพลง")
     async def queue(self, interaction: discord.Interaction):
