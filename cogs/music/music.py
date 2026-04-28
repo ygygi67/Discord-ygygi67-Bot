@@ -929,11 +929,11 @@ class Music(commands.Cog):
                 info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(query, download=False))
                 
             if not info or 'entries' not in info:
-                await interaction.followup.send("❌ ไม่พบเพลงในเพลย์ลิสต์")
+                await self._send_interaction(interaction, "❌ ไม่พบเพลงในเพลย์ลิสต์")
                 return
                 
             entries = info['entries']
-            await interaction.followup.send(f"✅ พบ {len(entries)} เพลง กำลังทยอยเพิ่มลงคิว...")
+            await self._send_interaction(interaction, f"✅ พบ {len(entries)} เพลง กำลังทยอยเพิ่มลงคิว...")
             
             queue = self.get_queue(interaction.guild.id)
             added = 0
@@ -959,13 +959,13 @@ class Music(commands.Cog):
                                 await self.send_now_playing(interaction.channel, next_t)
                                 
             if added > 0:
-                await interaction.followup.send(f"✅ เพิ่มเพลย์ลิสต์เสร็จสิ้น ({added} เพลง)")
+                await self._send_interaction(interaction, f"✅ เพิ่มเพลย์ลิสต์เสร็จสิ้น ({added} เพลง)")
             else:
-                await interaction.followup.send("❌ ไม่สามารถเพิ่มเพลงจากเพลย์ลิสต์ได้")
+                await self._send_interaction(interaction, "❌ ไม่สามารถเพิ่มเพลงจากเพลย์ลิสต์ได้")
                 
         except Exception as e:
             logger.error(f"Playlist error: {e}")
-            await interaction.followup.send("❌ เกิดข้อผิดพลาดในการโหลดเพลย์ลิสต์")
+            await self._send_interaction(interaction, "❌ เกิดข้อผิดพลาดในการโหลดเพลย์ลิสต์")
 
     @app_commands.command(name="เล่น", description="เล่นเพลงจากชื่อหรือลิงก์")
     @app_commands.describe(query="ชื่อเพลงหรือลิงก์", mode="เลือกโหมดการเล่น (สำหรับคาราโอเกะระบบจะโหลดและแยกเสียงร้องให้อัตโนมัติ)")
@@ -974,21 +974,25 @@ class Music(commands.Cog):
         app_commands.Choice(name="คาราโอเกะ - ตัดเสียงร้อง (Karaoke)", value="karaoke")
     ])
     async def play(self, interaction: discord.Interaction, query: str, mode: str = "normal"):
-        await interaction.response.defer()
+        # Avoid InteractionResponded if something upstream already replied.
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         queue = self.get_queue(interaction.guild.id)
         queue.text_channel_id = interaction.channel_id
-        if not interaction.user.voice: return await interaction.followup.send("❌ คุณต้องอยู่ในช่องเสียง", ephemeral=True)
+        if not interaction.user.voice:
+            return await self._send_interaction(interaction, "❌ คุณต้องอยู่ในช่องเสียง", ephemeral=True)
         
         vc = interaction.guild.voice_client
         if not vc: vc = await interaction.user.voice.channel.connect()
 
         if 'playlist' in query or '&list=' in query:
-            await interaction.followup.send("🎶 กำลังโหลดเพลย์ลิสต์...")
+            await self._send_interaction(interaction, "🎶 กำลังโหลดเพลย์ลิสต์...")
             asyncio.create_task(self._process_playlist(interaction, query))
             return
 
         track = await self.search_track(query)
-        if not track: return await interaction.followup.send("❌ ไม่พบเพลง", ephemeral=True)
+        if not track:
+            return await self._send_interaction(interaction, "❌ ไม่พบเพลง", ephemeral=True)
         track.requester = interaction.user
         track.is_karaoke = (mode == "karaoke")
         
@@ -999,9 +1003,18 @@ class Music(commands.Cog):
             next_t = queue.get_next()
             await self.play_track(vc, next_t)
             await self.send_now_playing(interaction.channel, next_t)
-            await interaction.followup.send(f"▶️ กำลังเล่น: **{track.title}**")
+            await self._send_interaction(interaction, f"▶️ กำลังเล่น: **{track.title}**")
         else:
-            await interaction.followup.send(f"✅ เพิ่มลงคิวลำดับที่ {pos}: **{track.title}**")
+            await self._send_interaction(interaction, f"✅ เพิ่มลงคิวลำดับที่ {pos}: **{track.title}**")
+
+    async def _send_interaction(self, interaction: discord.Interaction, content: Optional[str] = None, **kwargs):
+        """
+        Send exactly one response: use the initial response channel if available,
+        otherwise fall back to followups (prevents InteractionResponded).
+        """
+        if interaction.response.is_done():
+            return await interaction.followup.send(content, **kwargs)
+        return await interaction.response.send_message(content, **kwargs)
 
     @app_commands.command(name="คิว", description="ดูคิวเพลง")
     async def queue(self, interaction: discord.Interaction):
