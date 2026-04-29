@@ -800,6 +800,8 @@ class Music(commands.Cog):
 
     async def play_track(self, vc: discord.VoiceClient, track: MusicTrack, seek: float = 0):
         try:
+            if not vc or not vc.is_connected():
+                raise RuntimeError("Not connected to voice.")
             queue = self.get_queue(vc.guild.id)
             
             # 🎙️ Handle Karaoke Mode
@@ -851,7 +853,7 @@ class Music(commands.Cog):
         
         next_t = queue.get_next()
         vc = guild.voice_client
-        if next_t and vc:
+        if next_t and vc and vc.is_connected():
             await self.play_track(vc, next_t)
             
             # Use saved text channel or find one
@@ -1023,7 +1025,21 @@ class Music(commands.Cog):
             return await self._send_interaction(interaction, "❌ คุณต้องอยู่ในช่องเสียง", ephemeral=True)
         
         vc = interaction.guild.voice_client
-        if not vc: vc = await interaction.user.voice.channel.connect()
+        # Voice client can exist but be disconnected (stale) after restarts/network issues
+        if vc and not vc.is_connected():
+            try:
+                await vc.disconnect(force=True)
+            except Exception:
+                pass
+            vc = None
+
+        if not vc:
+            vc = await interaction.user.voice.channel.connect()
+        elif vc.channel != interaction.user.voice.channel:
+            try:
+                await vc.move_to(interaction.user.voice.channel)
+            except Exception:
+                pass
 
         if 'playlist' in query or '&list=' in query:
             await self._send_interaction(interaction, "🎶 กำลังโหลดเพลย์ลิสต์...")

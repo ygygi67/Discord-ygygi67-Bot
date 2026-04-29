@@ -60,6 +60,7 @@
 
 ## 🆕 อัปเดตล่าสุด
 
+- ✅ **อัปเดต: Voice Reconnect Fix (2026-04-29)** — แก้เคส `/เล่น` เจอ `Play error: Not connected to voice.` เมื่อมี VoiceClient ค้าง/หลุดการเชื่อมต่อหลังรีสตาร์ท โดยบังคับ reconnect/move เข้าห้องของผู้ใช้ก่อนเริ่มเล่น และกันไม่ให้ `handle_track_end` สั่งเล่นต่อบน VoiceClient ที่หลุดแล้ว
 - ✅ **อัปเดต: Music Resume Fix (2026-04-28)** — แก้บัคระบบเล่นเพลงต่อหลังรีสตาร์ท: ไม่กลับไปเล่นเพลงเดิมที่ “จบไปแล้ว”, และถ้าปิดบอทกลางเพลงจะกลับมาเล่นต่อจากตำแหน่งเดิม (บันทึก `elapsed` ก่อนตัดการเชื่อมต่อ Voice)
 - ✅ **อัปเดต: Safe Restart Diagnostics (2026-04-28)** — แก้ปัญหาใช้ `r`/`sr` แล้วไม่รีสตาร์ทบน Python 3.13 จาก `asyncio.CancelledError` หลุดออกจาก watchdog พร้อมเพิ่มคำสั่งคอนโซล `busy`/`why` และ log “busy reasons” เพื่อบอกชัดเจนว่า Safe Restart กำลังรออะไร (เพลง/TTS/แยกเสียง/YoutubeSpy/คิวงาน ฯลฯ)
 - ✅ **อัปเดต: Shared Queue Pending Detail (2026-04-28)** — เพิ่มการแสดงรายละเอียดงานที่ค้างใน Shared Queue ตอน Safe Restart รอ (โชว์ `task id/type/created_at`) เพื่อหาตัวงานที่บล็อก `sr` ได้ทันที
