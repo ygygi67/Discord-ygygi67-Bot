@@ -70,6 +70,21 @@ def save_console_control(data: dict):
     with open(CONSOLE_CONTROL_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def load_network_status() -> dict:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.path.exists(NETWORK_STATUS_FILE):
+        return {}
+    try:
+        with open(NETWORK_STATUS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_network_status(data: dict):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(NETWORK_STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 def resolve_primary_guild_id() -> str | None:
     """Resolve guild ID from env; fallback to data filename prefix."""
     guild_id = os.getenv('DISCORD_GUILD_ID')
@@ -794,15 +809,11 @@ class AlphaBotBase:
         try:
             # 0. บันทึกสถานะว่ากำลังออนไลน์
             try:
-                status_data = {}
-                if os.path.exists(NETWORK_STATUS_FILE):
-                    with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
-                        status_data = json.load(f)
+                status_data = load_network_status()
                 status_data["status"] = "online"
                 status_data["last_reconnect"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 status_data["recovery_pending"] = True
-                with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(status_data, f, indent=4)
+                save_network_status(status_data)
             except Exception: pass
 
             await asyncio.sleep(8)
@@ -834,19 +845,44 @@ class AlphaBotBase:
         except Exception as e:
             logger.error(f"Error in _notify_network_recovery: {e}")
 
+    async def _record_network_outage(self, reason: str = "gateway_disconnect"):
+        """Persist network outage details for the status dashboard and recovery flow."""
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            previous_status = load_network_status()
+            previous_outage = previous_status.get("last_outage")
+            with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
+                f.write(now_str)
+
+            status_data = previous_status
+            status_data["last_outage"] = now_str
+            status_data["status"] = "offline"
+            status_data["last_outage_reason"] = reason
+            status_data["recovery_pending"] = False
+            save_network_status(status_data)
+            if previous_outage != now_str:
+                logger.warning(f"Saved network outage status: {now_str} ({reason})")
+        except Exception as e:
+            logger.error(f"Could not save network outage status: {e}")
+
+    async def _resume_music_after_network_recovery(self):
+        """Resume saved music sessions after Discord gateway/network recovery."""
+        try:
+            music_cog = self.get_cog('Music')
+            if music_cog and hasattr(music_cog, 'auto_resume_on_load'):
+                asyncio.create_task(music_cog.auto_resume_on_load())
+        except Exception as e:
+            logger.warning(f"Could not schedule music auto-resume after recovery: {e}")
+
     async def _handle_unexpected_restart(self):
         """จัดการเมื่อตรวจพบว่าบอทเปิดใหม่หลังจากการปิดตัวแบบไม่ปกติ"""
         try:
             # บันทึกลงสถานะว่าเกิดเหตุการณ์ไม่ปกติ
             try:
-                status_data = {}
-                if os.path.exists(NETWORK_STATUS_FILE):
-                    with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
-                        status_data = json.load(f)
+                status_data = load_network_status()
                 status_data["unexpected_event"] = True
                 status_data["last_event_time"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(status_data, f, indent=4)
+                save_network_status(status_data)
             except Exception: pass
 
             # แจ้งเตือนเจ้าของบอทแบบเรียบง่าย
@@ -901,11 +937,7 @@ class AlphaBotBase:
         # 2. ตรวจสอบการกู้คืนจากเน็ตหลุด
         if os.path.exists(NETWORK_ERROR_FILE):
              asyncio.create_task(self._notify_network_recovery())
-             
-             # คืนค่าเสียง
-             music_cog = self.get_cog('Music')
-             if music_cog and hasattr(music_cog, 'auto_resume_on_load'):
-                 asyncio.create_task(music_cog.auto_resume_on_load())
+             await self._resume_music_after_network_recovery()
 
         activity_name = f"{len(self.guilds)} servers"
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=activity_name))
@@ -954,17 +986,21 @@ class AlphaBotBase:
 
     async def on_disconnect(self):
         logger.warning("🔌 Discord gateway disconnected. (Potential Network Outage)")
-        # สร้าง Flag ไว้เพื่อแจ้งเตือนตอน Reconnect
+        await self._record_network_outage("gateway_disconnect")
         try:
-            if not os.path.exists(NETWORK_ERROR_FILE):
-                with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
-                    f.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-                logger.info(f"Saved network error flag to: {NETWORK_ERROR_FILE}")
+            music = self.get_cog("Music")
+            if music:
+                for vc in list(self.voice_clients):
+                    if getattr(vc, "channel", None):
+                        await music.save_voice_state(vc.guild.id, vc.channel.id)
         except Exception as e:
-            logger.error(f"Could not save network error flag: {e}")
+            logger.warning(f"Could not persist music state on gateway disconnect: {e}")
 
     async def on_resumed(self):
         logger.info("♻️ Discord gateway session resumed successfully")
+        if os.path.exists(NETWORK_ERROR_FILE):
+            asyncio.create_task(self._notify_network_recovery())
+            await self._resume_music_after_network_recovery()
 
 class AlphaBot(AlphaBotBase, commands.Bot):
     def __init__(self):
@@ -1108,25 +1144,22 @@ def run_bot():
                     # มั่นใจว่าลบ ALIVE_FLAG ก่อนบันทึกความผิดพลาดเครือข่าย เพื่อไม่ให้ระบบเข้าใจผิดว่าบอทค้าง
                     if os.path.exists(ALIVE_FLAG):
                         os.remove(ALIVE_FLAG)
-                        
-                    with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
-                        f.write(now_str)
-                    
+
+                    if bot:
+                        await bot._record_network_outage(type(e).__name__)
+                    else:
+                        with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
+                            f.write(now_str)
+
                     # บันทึกลงสถานะรวม
-                    status_data = {}
-                    if os.path.exists(NETWORK_STATUS_FILE):
-                        try:
-                            with open(NETWORK_STATUS_FILE, 'r', encoding='utf-8') as f:
-                                status_data = json.load(f)
-                        except Exception: pass
+                    status_data = load_network_status()
                     status_data["last_outage"] = now_str
                     status_data["status"] = "offline"
                     # ตรวจสอบว่าเป็นเหตุการณ์ไม่ปกติหรือไม่ (ถ้าไม่ใช่ OSError ทั่วไป)
                     if not isinstance(e, (discord.GatewayNotFound, discord.ConnectionClosed, ConnectionResetError)):
                          status_data["unexpected_event"] = True
-                         
-                    with open(NETWORK_STATUS_FILE, 'w', encoding='utf-8') as f:
-                        json.dump(status_data, f, indent=4)
+
+                    save_network_status(status_data)
                 except Exception: pass
                 
                 delay = min(max_delay, base_delay * (2 ** (attempt - 1)))

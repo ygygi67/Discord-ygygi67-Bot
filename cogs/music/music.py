@@ -542,6 +542,13 @@ class Music(commands.Cog):
                 try:
                     # Check if already connected
                     vc = guild.voice_client
+                    if vc and not vc.is_connected():
+                        try:
+                            await vc.disconnect(force=True)
+                        except Exception:
+                            pass
+                        vc = None
+
                     if not vc:
                         # Connect to voice channel with retry
                         for attempt in range(3):
@@ -556,6 +563,11 @@ class Music(commands.Cog):
                                 await asyncio.sleep(2)
                     else:
                         logger.info(f"[AutoResume] Hijacking existing voice client in {guild.name}")
+                        if vc.channel != channel:
+                            try:
+                                await vc.move_to(channel)
+                            except Exception as me:
+                                logger.warning(f"[AutoResume] Move to saved voice channel failed in {guild.name}: {me}")
                     
                     if isinstance(state, dict):
                         queue = self.get_queue(guild.id)
