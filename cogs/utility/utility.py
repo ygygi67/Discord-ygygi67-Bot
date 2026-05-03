@@ -15,6 +15,7 @@ import shutil
 import re
 import csv
 import io
+from collections import defaultdict
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import yt_dlp
 
@@ -58,6 +59,8 @@ class Utility(commands.Cog):
         self.current_frame = 0
         self.bot_admin_id = 1034845842709958786
         self.main_only_mode = os.getenv("UTILITY_MAIN_ONLY", "1").strip().lower() in {"1", "true", "yes", "on"}
+        self.stats_cooldown = 60
+        self.cooldowns = defaultdict(lambda: defaultdict(float))
         default_core = ["คำสั่ง", "โหลดคลิป", "ลบรีแอก", "ล้างรีแอก", "เสียง", "ระบบ", "ติดตาม", "สถิติ", "เชิญบอทเต็ม"]
         raw_core = os.getenv("UTILITY_CORE_COMMANDS", ",".join(default_core)).strip()
         self.core_commands = {x.strip() for x in re.split(r"[,\s;|]+", raw_core) if x.strip()}
@@ -607,8 +610,9 @@ class Utility(commands.Cog):
         try:
             # Check cooldown
             current_time = datetime.now().timestamp()
-            if current_time - self.cooldowns[interaction.guild.id][interaction.user.id] < self.stats_cooldown:
-                remaining = int(self.stats_cooldown - (current_time - self.cooldowns[interaction.guild.id][interaction.user.id]))
+            guild_id = interaction.guild.id if interaction.guild else 0
+            if current_time - self.cooldowns[guild_id][interaction.user.id] < self.stats_cooldown:
+                remaining = int(self.stats_cooldown - (current_time - self.cooldowns[guild_id][interaction.user.id]))
                 minutes = remaining // 60
                 seconds = remaining % 60
                 await interaction.response.send_message(f"⏳ กรุณารออีก {minutes} นาที {seconds} วินาทีก่อนใช้คำสั่งนี้อีกครั้ง", ephemeral=True)
@@ -685,7 +689,7 @@ class Utility(commands.Cog):
             await interaction.edit_original_response(embed=embed)
             
             # Update cooldown after successful execution
-            self.cooldowns[interaction.guild.id][interaction.user.id] = current_time
+            self.cooldowns[guild_id][interaction.user.id] = current_time
             
         except Exception as e:
             await self.cog_app_command_error(interaction, e)

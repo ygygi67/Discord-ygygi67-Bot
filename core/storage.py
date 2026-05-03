@@ -19,8 +19,14 @@ class Storage:
             os.makedirs(directory)
             logger.info(f"Created directory for storage: {directory}")
 
-    def load_data(self):
-        """Load data from file."""
+    def load_data(self, *args):
+        """Load all data, or load a guild/key pair for legacy callers."""
+        if args:
+            if len(args) == 2:
+                guild_id, key = args
+                return self.load_data_for_guild(guild_id, key)
+            raise TypeError("load_data() expects either no arguments or (guild_id, key)")
+
         try:
             if os.path.exists(self.filename):
                 with open(self.filename, 'r') as f:
@@ -32,8 +38,14 @@ class Storage:
             logger.error(f"Error loading data: {str(e)}")
             self.data = {}
 
-    def save_data(self):
-        """Save data to file."""
+    def save_data(self, *args):
+        """Save all data, or save a guild/key/value tuple for legacy callers."""
+        if args:
+            if len(args) == 3:
+                guild_id, key, value = args
+                return self.save_data_for_guild(guild_id, key, value)
+            raise TypeError("save_data() expects either no arguments or (guild_id, key, value)")
+
         try:
             with open(self.filename, 'w') as f:
                 json.dump(self.data, f, indent=4)
@@ -70,4 +82,4 @@ class Storage:
             logger.error(f"Error deleting data for guild {guild_id}: {str(e)}")
 
 # Create a global instance
-storage = Storage() 
+storage = Storage()

@@ -30,6 +30,24 @@ class BotNotifications(commands.Cog):
     def _now(self):
         return datetime.now(timezone.utc)
 
+    def _permission_summary(self, guild: discord.Guild) -> str:
+        perms = guild.me.guild_permissions
+        items = [
+            ("Administrator", perms.administrator),
+            ("Manage Guild", perms.manage_guild),
+            ("Manage Channels", perms.manage_channels),
+            ("Manage Roles", perms.manage_roles),
+            ("Manage Messages", perms.manage_messages),
+            ("View Audit Log", perms.view_audit_log),
+            ("Send Messages", perms.send_messages),
+            ("Embed Links", perms.embed_links),
+            ("Attach Files", perms.attach_files),
+            ("Connect Voice", perms.connect),
+            ("Speak Voice", perms.speak),
+            ("Move Members", perms.move_members),
+        ]
+        return "\n".join(f"{'✅' if enabled else '❌'} {name}" for name, enabled in items)
+
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
         """เมื่อบอทถูกเชิญเข้าเซิร์ฟเวอร์"""
@@ -56,6 +74,7 @@ class BotNotifications(commands.Cog):
         embed.add_field(name="ID เซิร์ฟเวอร์", value=f"`{guild.id}`", inline=True)
         embed.add_field(name="เจ้าของเซิร์ฟเวอร์", value=f"{guild.owner.mention} (`{guild.owner.name}`)" if guild.owner else "ไม่พบข้อมูล", inline=False)
         embed.add_field(name="จำนวนสมาชิก", value=f"{guild.member_count} คน", inline=True)
+        embed.add_field(name="สิทธิ์ที่บอทได้รับ", value=self._permission_summary(guild), inline=False)
         
         if inviter:
             embed.add_field(name="ผู้เชิญเข้าร่วม", value=f"{inviter.mention} (`{inviter.name}`)", inline=True)

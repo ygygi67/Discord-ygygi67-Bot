@@ -336,6 +336,7 @@ class MusicControlView(discord.ui.View):
         if voice_client:
             queue = self.music_cog.get_queue(interaction.guild.id)
             queue.clear()
+            queue.is_afk = False
             await voice_client.disconnect()
             await self.music_cog.save_voice_state(interaction.guild.id, None)
             await interaction.response.send_message("⏹️ หยุดเล่นและออกจากช่องเสียง", ephemeral=True)
@@ -1101,7 +1102,9 @@ class Music(commands.Cog):
     async def stop(self, interaction: discord.Interaction):
         vc = interaction.guild.voice_client
         if vc:
-            self.get_queue(guild_id=interaction.guild.id).clear()
+            q = self.get_queue(guild_id=interaction.guild.id)
+            q.clear()
+            q.is_afk = False
             await vc.disconnect()
             await self.save_voice_state(interaction.guild.id, None)
             await interaction.response.send_message("✅ หยุดและออกจากห้องแล้ว")
@@ -1205,7 +1208,8 @@ class Music(commands.Cog):
         else:
             await interaction.followup.send("❌ ไม่สามารถส่งงานไปยัง Worker ได้", ephemeral=True)
 
-    @app_commands.command(name="queue_stats", description="ดูสถิติคิวงาน (Distributed Mode)")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="queue_stats", description="ดูสถิติคิวงาน (Distributed Mode)")
     async def queue_stats(self, interaction: discord.Interaction):
         if not self.shared_queue:
             return await interaction.response.send_message("❌ Distributed mode ไม่เปิดใช้งาน", ephemeral=True)

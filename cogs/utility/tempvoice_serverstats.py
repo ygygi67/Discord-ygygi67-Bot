@@ -298,7 +298,8 @@ class TempVoiceServerStats(commands.Cog):
                     pass
                 owned.pop(before.channel.id, None)
 
-    @app_commands.command(name="ตั้งค่า_serverstats", description="ตั้งค่าช่องนับจำนวนผู้ใช้และบอทอัตโนมัติ")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="ตั้งค่า_serverstats", description="ตั้งค่าช่องนับจำนวนผู้ใช้และบอทอัตโนมัติ")
     @app_commands.describe(
         โหมด="โหมดการตั้งค่า",
         หมวดหมู่="หมวดที่ต้องการให้สร้างช่อง (กรณีโหมดสร้างอัตโนมัติ)",
@@ -386,7 +387,8 @@ class TempVoiceServerStats(commands.Cog):
                 tagged.append(f"🤖 บอท: {bots_ch.mention}")
             await interaction.followup.send("✅ อัปเดต ServerStats แล้ว\n" + "\n".join(tagged), ephemeral=True)
 
-    @app_commands.command(name="ตั้งชื่อ_serverstats", description="แก้ข้อความหน้าตัวเลขของช่องนับผู้ใช้/บอท")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="ตั้งชื่อ_serverstats", description="แก้ข้อความหน้าตัวเลขของช่องนับผู้ใช้/บอท")
     @app_commands.describe(
         ชนิด="เลือกว่าจะแก้ช่องผู้ใช้หรือช่องบอท",
         ข้อความหน้าเลข="เช่น 👥 ผู้ใช้: หรือ 🤖 บอท: (ใส่ {count} ได้)"
@@ -448,7 +450,8 @@ class TempVoiceServerStats(commands.Cog):
             tagged.append(f"🤖 {bots_ch.mention}")
         await interaction.response.send_message("✅ อัปเดตชื่อ ServerStats แล้ว\n" + ("\n".join(tagged) if tagged else ""), ephemeral=True)
 
-    @app_commands.command(name="ตั้งค่า_tempvoice", description="ตั้งค่าระบบ TempVoice")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="ตั้งค่า_tempvoice", description="ตั้งค่าระบบ TempVoice")
     @app_commands.describe(
         โหมด="โหมดการตั้งค่า",
         หมวดหมู่="หมวดที่ต้องการใช้/สร้างห้องชั่วคราวในนี้",
@@ -513,7 +516,8 @@ class TempVoiceServerStats(commands.Cog):
             ephemeral=True
         )
 
-    @app_commands.command(name="ตั้งชื่อ_tempvoice", description="แก้รูปแบบชื่อห้อง TempVoice ที่บอทสร้าง")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="ตั้งชื่อ_tempvoice", description="แก้รูปแบบชื่อห้อง TempVoice ที่บอทสร้าง")
     @app_commands.describe(รูปแบบชื่อห้อง="รองรับ {user} {display} {num}")
     async def set_tempvoice_template(self, interaction: discord.Interaction, รูปแบบชื่อห้อง: str):
         if not self._is_admin(interaction):
@@ -530,7 +534,8 @@ class TempVoiceServerStats(commands.Cog):
         _save_config(self.config)
         await interaction.response.send_message("✅ อัปเดตรูปแบบชื่อห้อง TempVoice แล้ว", ephemeral=True)
 
-    @app_commands.command(name="เปลี่ยนชื่อห้อง_tempvoice", description="ผู้สร้างห้องสามารถเปลี่ยนชื่อห้องชั่วคราวของตัวเองได้")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="เปลี่ยนชื่อห้อง_tempvoice", description="ผู้สร้างห้องสามารถเปลี่ยนชื่อห้องชั่วคราวของตัวเองได้")
     @app_commands.describe(ชื่อใหม่="ชื่อห้องใหม่")
     async def rename_tempvoice_room(self, interaction: discord.Interaction, ชื่อใหม่: str):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):

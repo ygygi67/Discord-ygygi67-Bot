@@ -20,6 +20,7 @@ class Roles(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def create_role_panel(self, interaction: discord.Interaction, title: str, description: str):
         """สร้างป้ายสำหรับเลือกยศด้วยอีโมจิ"""
+        await interaction.response.defer(ephemeral=True)
         try:
             embed = discord.Embed(
                 title=title,
@@ -43,23 +44,31 @@ class Roles(commands.Cog):
                 }
             })
             
-            await interaction.response.send_message("✅ สร้างป้ายยศเรียบร้อยแล้ว", ephemeral=True)
+            await interaction.followup.send("✅ สร้างป้ายยศเรียบร้อยแล้ว", ephemeral=True)
             
         except Exception as e:
             logger.error(f"Error creating role panel: {e}")
-            await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {str(e)}", ephemeral=True)
 
     @app_commands.command(name="เพิ่มยศ", description="เพิ่มยศลงในป้ายยศ")
     @app_commands.default_permissions(administrator=True)
     async def add_role(self, interaction: discord.Interaction, message_id: str, role: discord.Role, emoji: str):
         """เพิ่มยศลงในป้ายยศ"""
+        await interaction.response.defer(ephemeral=True)
         try:
             message_id = int(message_id)
             message = await interaction.channel.fetch_message(message_id)
             
             if message.id not in self.role_messages:
-                await interaction.response.send_message("❌ ไม่พบป้ายยศนี้", ephemeral=True)
-                return
+                role_panels = storage.load_data(interaction.guild.id, "role_panels") or {}
+                panel = role_panels.get(str(message.id))
+                if not panel:
+                    await interaction.followup.send("❌ ไม่พบป้ายยศนี้", ephemeral=True)
+                    return
+                self.role_messages[message.id] = {
+                    "guild_id": interaction.guild.id,
+                    "roles": panel.get("roles", {})
+                }
                 
             # Add reaction to message
             await message.add_reaction(emoji)
@@ -73,11 +82,11 @@ class Roles(commands.Cog):
                 role_panels[str(message.id)]["roles"][emoji] = role.id
                 storage.save_data(interaction.guild.id, "role_panels", role_panels)
             
-            await interaction.response.send_message(f"✅ เพิ่มยศ {role.name} เรียบร้อยแล้ว", ephemeral=True)
+            await interaction.followup.send(f"✅ เพิ่มยศ {role.name} เรียบร้อยแล้ว", ephemeral=True)
             
         except Exception as e:
             logger.error(f"Error adding role: {e}")
-            await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาด: {str(e)}", ephemeral=True)
 
     @tasks.loop(minutes=1)
     async def auto_remove_old_role(self):

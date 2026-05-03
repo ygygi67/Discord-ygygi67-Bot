@@ -5,7 +5,10 @@ import os
 import asyncio
 import logging
 import sys
+import json
+import psutil
 from datetime import datetime, timezone
+from collections import Counter
 
 logger = logging.getLogger('maintenance_cog')
 
@@ -81,7 +84,8 @@ class Maintenance(commands.Cog):
 
         return success_count, error_count
 
-    @app_commands.command(name="system_reset", description="🛠️ รีเซ็ตระบบใหม่ (Reload Cogs) เพื่อแก้ไขปัญหาบอทเอ๋อ หรือตั้งค่าไม่ติด")
+    # Disabled slash command: merged into /sync, kept as legacy code.
+    # @app_commands.command(name="system_reset", description="🛠️ รีเซ็ตระบบใหม่ (Reload Cogs) เพื่อแก้ไขปัญหาบอทเอ๋อ หรือตั้งค่าไม่ติด")
     @app_commands.default_permissions(administrator=True)
     async def system_reset(self, interaction: discord.Interaction):
         """คำสั่งสำหรับ Admin ในการรีเซ็ตระบบด้วยตนเอง"""
@@ -114,7 +118,25 @@ class Maintenance(commands.Cog):
         
         await interaction.followup.send(embed=result_embed)
 
-    @app_commands.command(name="system_sync", description="🔄 ซิงค์คำสั่ง Slash Commands ทั้งหมดไปยังเซิร์ฟเวอร์ (แก้ป้ายคำสั่งไม่ขึ้น)")
+    @app_commands.command(name="reload_system", description="🛠️ รีโหลด Cogs และระบบหลักโดยไม่เตะบอทออกจากห้องเสียง")
+    @app_commands.default_permissions(administrator=True)
+    async def reload_system(self, interaction: discord.Interaction):
+        if not getattr(interaction.user, "guild_permissions", None) or not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ ต้องมีสิทธิ์ Administrator", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        start_time = datetime.now()
+        success, errors = await self.perform_reset()
+        duration = (datetime.now() - start_time).total_seconds()
+        await interaction.followup.send(
+            f"✅ รีโหลดระบบเรียบร้อย\n"
+            f"• สำเร็จ: `{success}` โมดูล\n"
+            f"• ผิดพลาด: `{errors}` โมดูล\n"
+            f"• ใช้เวลา: `{duration:.2f}` วินาที",
+            ephemeral=True
+        )
+
+    # Disabled slash command: merged into /sync, kept as legacy code.
+    # @app_commands.command(name="system_sync", description="🔄 ซิงค์คำสั่ง Slash Commands ทั้งหมดไปยังเซิร์ฟเวอร์ (แก้ป้ายคำสั่งไม่ขึ้น)")
     @app_commands.default_permissions(administrator=True)
     async def system_sync(self, interaction: discord.Interaction):
         """คำสั่งสำหรับซิงค์คิวรีคำสั่งใหม่ (ใช้เมื่อคำสั่งใหม่ไม่ปรากฏหรือค้าง)"""
@@ -135,8 +157,24 @@ class Maintenance(commands.Cog):
     @app_commands.command(name="system_status", description="📊 ตรวจสอบสถานะความพร้อมของระบบ")
     async def system_status(self, interaction: discord.Interaction):
         """ดูว่ามีโมดูลไหนที่โหลดอยู่บ้าง"""
+        await interaction.response.defer(ephemeral=True)
         extensions = list(self.bot.extensions.keys())
         cogs = list(self.bot.cogs.keys())
+        process = psutil.Process(os.getpid())
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        uptime = datetime.now(timezone.utc) - self.bot.start_time
+        voice_clients = [vc for vc in self.bot.voice_clients if vc and vc.is_connected()]
+        tree_commands = list(self.bot.tree.walk_commands())
+        command_names = [cmd.qualified_name for cmd in tree_commands]
+        duplicates = [name for name, count in Counter(command_names).items() if count > 1]
+        disabled_legacy = sorted(getattr(self.bot, "disabled_legacy_commands", []))
+        network_status = {}
+        try:
+            with open(os.path.join("data", "network_status.json"), "r", encoding="utf-8") as f:
+                network_status = json.load(f)
+        except Exception:
+            network_status = {}
         
         embed = discord.Embed(
             title="📊 รายงานความเสถียรของระบบ",
@@ -146,9 +184,45 @@ class Maintenance(commands.Cog):
         
         embed.add_field(name="📦 Loaded Extensions", value=f"`{len(extensions)}` โมดูล", inline=True)
         embed.add_field(name="⚙️ Active Cogs", value=f"`{len(cogs)}` ฟีเจอร์", inline=True)
+        embed.add_field(
+            name="🧭 Slash Commands",
+            value=(
+                f"Local tree: `{len(command_names)}` คำสั่ง\n"
+                f"คำสั่งซ้ำในโค้ด: `{len(duplicates)}`\n"
+                f"Legacy ปิดไว้: `{len(disabled_legacy)}`"
+            ),
+            inline=True
+        )
+        embed.add_field(name="🌐 Discord", value=f"Latency: `{round(self.bot.latency * 1000)}ms`\nGuilds: `{len(self.bot.guilds)}`\nVoice: `{len(voice_clients)}`", inline=True)
+        embed.add_field(name="💻 Process", value=f"CPU: `{cpu_percent}%`\nRAM: `{memory_mb:.1f} MB`\nUptime: `{str(uptime).split('.')[0]}`", inline=True)
+        embed.add_field(name="🧩 Runtime", value=f"Tasks: `{len(asyncio.all_tasks())}`\nShutting down: `{getattr(self.bot, '_is_shutting_down', False)}`\nMode: `{getattr(self.bot, 'mode', 'unknown')}`", inline=True)
+        embed.add_field(
+            name="📡 Network Recovery",
+            value=(
+                f"Status: `{network_status.get('status', 'unknown')}`\n"
+                f"Last outage: `{network_status.get('last_outage', 'ไม่พบประวัติ')}`\n"
+                f"Last reconnect: `{network_status.get('last_reconnect', 'ไม่พบประวัติ')}`"
+            ),
+            inline=False
+        )
+        if duplicates:
+            embed.add_field(
+                name="⚠️ คำสั่งซ้ำในโค้ด",
+                value="\n".join(f"• `/{name}`" for name in duplicates[:10]),
+                inline=False
+            )
+        if disabled_legacy:
+            embed.add_field(
+                name="🧹 Legacy ที่ปิดแล้ว",
+                value=(
+                    "\n".join(f"• `/{name}`" for name in disabled_legacy[:12]) +
+                    "\nใช้ `/sync scope:guild force:true` เพื่อล้างเมนูค้างในเซิร์ฟเวอร์นี้"
+                ),
+                inline=False
+            )
         embed.add_field(name="⏳ รอรอบรีเซ็ตอัตโนมัติ", value=f"ทุก 24 ชม. (รอบถัดไป: {self.auto_reset_task.next_iteration.strftime('%H:%M:%S') if self.auto_reset_task.next_iteration else 'N/A'})", inline=False)
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Maintenance(bot))

@@ -1,10 +1,13 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import logging
 from datetime import datetime, timezone
 from collections import defaultdict
 import asyncio
 import time
+import json
+import os
 
 logger = logging.getLogger('discord_bot')
 
@@ -48,14 +51,92 @@ def diff_permissions(before: discord.Permissions, after: discord.Permissions) ->
 class ServerLogger(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.log_channel_id: int = 1467898137459949742
+        self.config_path = "data/server_logger_config.json"
+        self.global_log_channel_id: int | None = None
+        self.guild_log_channels: dict[str, int] = {}
+        self._load_log_config()
         self.invites: dict[int, dict[str, int]] = {}  # guild_id → {code: uses}
         # Rate limiter: แต่ละ (event_type, entity_id) ได้สูงสุด 5 ครั้ง / 10 วินาที
         self._rate_limiter = RateLimiter(max_calls=5, period=10.0)
         
         self.log_queue = []
         self._flush_task = self.bot.loop.create_task(self._log_flusher())
-        logger.info(f"ServerLogger initialized | log channel: {self.log_channel_id}")
+        logger.info(
+            "ServerLogger initialized | global=%s guild_channels=%s",
+            self.global_log_channel_id,
+            len(self.guild_log_channels),
+        )
+
+    def _load_log_config(self):
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                global_id = data.get("global_log_channel_id", data.get("log_channel_id"))
+                self.global_log_channel_id = int(global_id) if global_id else 1467898137459949742
+                self.guild_log_channels = {
+                    str(guild_id): int(channel_id)
+                    for guild_id, channel_id in data.get("guild_log_channels", {}).items()
+                    if channel_id
+                }
+                return
+        except Exception as e:
+            logger.warning(f"Failed to load server logger config: {e}")
+        self.global_log_channel_id = 1467898137459949742
+        self.guild_log_channels = {}
+
+    def _save_log_config(self):
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "global_log_channel_id": self.global_log_channel_id,
+                    "guild_log_channels": self.guild_log_channels,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+    def _is_bot_admin(self, user_id: int) -> bool:
+        admin_cog = self.bot.get_cog("Admin")
+        if admin_cog and hasattr(admin_cog, "allowed_user_id"):
+            return str(user_id) == str(getattr(admin_cog, "allowed_user_id"))
+        return user_id == 1034845842709958786
+
+    def _target_log_channels(self, guild: discord.Guild | None) -> list[int]:
+        targets: list[int] = []
+        if self.global_log_channel_id:
+            targets.append(int(self.global_log_channel_id))
+        if guild:
+            guild_channel_id = self.guild_log_channels.get(str(guild.id))
+            if guild_channel_id and guild_channel_id not in targets:
+                targets.append(int(guild_channel_id))
+        return targets
+
+    @app_commands.command(name="ตั้งค่าห้อง_log", description="ตั้งค่าห้องสำหรับบันทึก LOG ของบอท")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(channel="ช่องที่จะให้บอทส่ง LOG")
+    async def setup_log_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not interaction.guild:
+            await interaction.response.send_message("❌ ใช้คำสั่งนี้ในเซิร์ฟเวอร์เท่านั้น", ephemeral=True)
+            return
+
+        is_bot_admin = self._is_bot_admin(interaction.user.id)
+        is_server_admin = interaction.user.guild_permissions.manage_guild
+        if not (is_bot_admin or is_server_admin):
+            await interaction.response.send_message("❌ ต้องมีสิทธิ์จัดการเซิร์ฟเวอร์หรือเป็นแอดมินบอท", ephemeral=True)
+            return
+
+        if is_bot_admin:
+            self.global_log_channel_id = channel.id
+            scope_text = "Global LOG รวมทุกเซิร์ฟเวอร์"
+        else:
+            self.guild_log_channels[str(interaction.guild.id)] = channel.id
+            scope_text = f"LOG เฉพาะเซิร์ฟเวอร์ {interaction.guild.name}"
+
+        self._save_log_config()
+        await interaction.response.send_message(f"✅ ตั้งค่า {scope_text} เป็น {channel.mention} แล้ว", ephemeral=True)
 
     async def cog_unload(self):
         if hasattr(self, '_flush_task') and self._flush_task:
@@ -67,23 +148,30 @@ class ServerLogger(commands.Cog):
         while not self.bot.is_closed():
             try:
                 if self.log_queue:
-                    channel = self.bot.get_channel(self.log_channel_id) or await self._fetch_channel()
+                    channel_id, embeds_to_send = self.log_queue[0]
+                    channel = self.bot.get_channel(channel_id) or await self._fetch_channel(channel_id)
                     if channel:
                         # Discord ให้ส่งได้สูงสุด 10 embed ต่อ 1 ข้อความ
-                        embeds_to_send = self.log_queue[:10]
-                        self.log_queue = self.log_queue[10:]
+                        same_channel_embeds = []
+                        remaining_queue = []
+                        for queued_channel_id, queued_embed in self.log_queue:
+                            if queued_channel_id == channel_id and len(same_channel_embeds) < 10:
+                                same_channel_embeds.append(queued_embed)
+                            else:
+                                remaining_queue.append((queued_channel_id, queued_embed))
+                        self.log_queue = remaining_queue
                         try:
-                            await channel.send(embeds=embeds_to_send)
+                            await channel.send(embeds=same_channel_embeds)
                         except discord.HTTPException as e:
                             # ถ้าโดน Rate limit ให้พักและเอาข้อมูลกลับไปคิว
                             if e.status == 429:
-                                self.log_queue = embeds_to_send + self.log_queue
+                                self.log_queue = [(channel_id, embed) for embed in same_channel_embeds] + self.log_queue
                                 retry_after = getattr(e, "retry_after", 5.0)
                                 await asyncio.sleep(retry_after + 1.0)
                             else:
                                 logger.error(f"HTTPException sending log queue: {e}")
                         except discord.Forbidden:
-                            logger.error(f"Missing permission to send to log channel {self.log_channel_id}")
+                            logger.error(f"Missing permission to send to log channel {channel_id}")
             except Exception as e:
                 logger.error(f"Error in log flusher: {e}")
             
@@ -107,11 +195,12 @@ class ServerLogger(commands.Cog):
         elif not embed.footer.text:
             embed.set_footer(text="System Log")
 
-        self.log_queue.append(embed)
+        for channel_id in self._target_log_channels(guild):
+            self.log_queue.append((channel_id, embed.copy()))
 
-    async def _fetch_channel(self) -> discord.TextChannel | None:
+    async def _fetch_channel(self, channel_id: int) -> discord.TextChannel | None:
         try:
-            return await self.bot.fetch_channel(self.log_channel_id)  # type: ignore
+            return await self.bot.fetch_channel(channel_id)  # type: ignore
         except Exception:
             return None
 

@@ -90,6 +90,36 @@ class BulkDeleteControlView(discord.ui.View):
         await interaction.response.edit_message(view=self)
         super().stop()
 
+class ConfirmStatusChannelView(discord.ui.View):
+    def __init__(self, cog: "Admin", requester_id: int, channel: discord.TextChannel):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.requester_id = requester_id
+        self.channel = channel
+
+    async def _auth(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message("❌ ปุ่มนี้สำหรับคนที่เริ่มคำสั่งเท่านั้น", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="ยืนยันตั้งช่องนี้", style=discord.ButtonStyle.danger, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._auth(interaction):
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="⏳ กำลังตั้งค่าสถานะและล้างข้อความในช่อง...", embed=None, view=self)
+        await self.cog._apply_status_channel(interaction, self.channel)
+
+    @discord.ui.button(label="ยกเลิก", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._auth(interaction):
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="❌ ยกเลิกการตั้งค่าช่องสถานะแล้ว", embed=None, view=self)
+
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -977,7 +1007,8 @@ class Admin(commands.Cog):
             logger.error(f"Error creating server admin role: {str(e)}")
             await interaction.response.send_message("❌ เกิดข้อผิดพลาดในการสร้างยศแอดมินเซิร์ฟเวอร์", ephemeral=True)
 
-    @app_commands.command(name="ให้แอดมินเซิร์ฟเวอร์", description="ให้ยศแอดมินเซิร์ฟเวอร์แก่ผู้ใช้")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="ให้แอดมินเซิร์ฟเวอร์", description="ให้ยศแอดมินเซิร์ฟเวอร์แก่ผู้ใช้")
     @app_commands.describe(user="ผู้ใช้ที่จะให้ยศแอดมินเซิร์ฟเวอร์")
     async def give_server_admin(self, interaction: discord.Interaction, user: discord.Member):
         """ให้ยศแอดมินเซิร์ฟเวอร์แก่ผู้ใช้"""
@@ -1005,7 +1036,8 @@ class Admin(commands.Cog):
             logger.error(f"Error giving server admin role: {str(e)}")
             await interaction.response.send_message("❌ เกิดข้อผิดพลาดในการให้ยศแอดมินเซิร์ฟเวอร์", ephemeral=True)
 
-    @app_commands.command(name="ลบแอดมินเซิร์ฟเวอร์", description="ลบยศแอดมินเซิร์ฟเวอร์จากผู้ใช้")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="ลบแอดมินเซิร์ฟเวอร์", description="ลบยศแอดมินเซิร์ฟเวอร์จากผู้ใช้")
     @app_commands.describe(user="ผู้ใช้ที่จะลบยศแอดมินเซิร์ฟเวอร์")
     async def remove_server_admin(self, interaction: discord.Interaction, user: discord.Member):
         """ลบยศแอดมินเซิร์ฟเวอร์จากผู้ใช้"""
@@ -1033,7 +1065,8 @@ class Admin(commands.Cog):
             logger.error(f"Error removing server admin role: {str(e)}")
             await interaction.response.send_message("❌ เกิดข้อผิดพลาดในการลบยศแอดมินเซิร์ฟเวอร์", ephemeral=True)
 
-    @app_commands.command(name="แอดมินเซิร์ฟเวอร์", description="แสดงรายชื่อแอดมินเซิร์ฟเวอร์ทั้งหมด")
+    # Disabled slash command: kept as legacy code, not registered.
+    # @app_commands.command(name="แอดมินเซิร์ฟเวอร์", description="แสดงรายชื่อแอดมินเซิร์ฟเวอร์ทั้งหมด")
     async def list_server_admins(self, interaction: discord.Interaction):
         """แสดงรายชื่อแอดมินเซิร์ฟเวอร์ทั้งหมด"""
         try:
@@ -1065,50 +1098,85 @@ class Admin(commands.Cog):
     @app_commands.describe(channel="ช่องสำหรับแสดงสถานะ")
     async def setup_status(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """ตั้งค่าช่องสำหรับแสดงสถานะบอท"""
-        if not self.is_admin(interaction.user.id):
+        can_manage = self.is_admin(interaction.user.id) or bool(
+            getattr(interaction.user, "guild_permissions", None)
+            and interaction.user.guild_permissions.manage_guild
+        )
+        if not can_manage:
             await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
             return
 
+        embed = discord.Embed(
+            title="⚠️ ยืนยันการตั้งค่าช่องสถานะ",
+            description=(
+                f"คุณกำลังตั้ง {channel.mention} เป็นช่องแสดงสถานะบอท\n\n"
+                "**สำคัญ:** ระบบสถานะจะลบข้อความทั้งหมด/ข้อความล่าสุดในช่องนี้เป็นระยะ "
+                "เพื่อให้เหลือบอร์ดสถานะล่าสุดเพียงชุดเดียว\n\n"
+                "ถ้าช่องนี้มีข้อความสำคัญ กรุณากดยกเลิกแล้วเลือกช่องใหม่ครับ"
+            ),
+            color=discord.Color.orange(),
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="ช่องที่จะถูกใช้", value=f"{channel.mention}\nID: `{channel.id}`", inline=False)
+        embed.set_footer(text="กดปุ่มยืนยันภายใน 120 วินาที")
+        await interaction.response.send_message(
+            embed=embed,
+            view=ConfirmStatusChannelView(self, interaction.user.id, channel),
+            ephemeral=True
+        )
+
+    async def _apply_status_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         try:
-            # Create initial status message
-            embed = discord.Embed(
-                title="🤖 สถานะบอท",
-                description="กำลังตั้งค่าสถานะ...",
-                color=discord.Color.blue()
-            )
-            
-            message = await channel.send(embed=embed)
-            
-            # Store channel and message
             self.status_channel = channel
-            self.status_message = message
-            
-            # Save channel ID
             self.save_admin_config()
+
+            status_cog = self.bot.get_cog("Status")
+            if status_cog and hasattr(status_cog, "set_status_channel"):
+                await status_cog.set_status_channel(interaction.guild.id, channel.id, global_channel=self.is_admin(interaction.user.id))
+            else:
+                embed = discord.Embed(
+                    title="🌐 ระบบจัดการอัลฟ่า | Alpha System Dashboard",
+                    description="กำลังตั้งค่าสถานะ...",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                self.status_message = await channel.send(embed=embed)
             
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"✅ ตั้งค่าช่องแสดงสถานะที่ {channel.mention} เรียบร้อยแล้ว",
                 ephemeral=True
             )
             
             # Start or restart the update task
-            if self.status_task:
-                self.status_task.cancel()
-            self.status_task = self.bot.loop.create_task(self.update_status())
+            if not status_cog:
+                if self.status_task:
+                    self.status_task.cancel()
+                self.status_task = self.bot.loop.create_task(self.update_status())
             
         except Exception as e:
             logger.error(f"Error setting up status channel: {e}")
-            await interaction.response.send_message(
-                f"❌ เกิดข้อผิดพลาดในการตั้งค่าช่องแสดงสถานะ: {str(e)}",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดในการตั้งค่าช่องแสดงสถานะ: {str(e)}", ephemeral=True)
 
     @app_commands.command(name="ตรวจสอบสิทธิ์บอท", description="ตรวจสอบสิทธิ์ของบอทในเซิร์ฟเวอร์")
-    async def check_bot_permissions(self, interaction: discord.Interaction):
+    @app_commands.describe(guild_id="ID เซิร์ฟเวอร์ที่ต้องการตรวจ (ไม่ใส่ = เซิร์ฟเวอร์ปัจจุบัน)")
+    async def check_bot_permissions(self, interaction: discord.Interaction, guild_id: Optional[str] = None):
         """ตรวจสอบสิทธิ์ของบอทในเซิร์ฟเวอร์"""
         try:
+            guild = interaction.guild
+            if guild_id:
+                if not self.is_admin(interaction.user.id):
+                    await interaction.response.send_message("❌ การตรวจข้ามเซิร์ฟเวอร์ใช้ได้เฉพาะแอดมินบอท", ephemeral=True)
+                    return
+                if not guild_id.isdigit():
+                    await interaction.response.send_message("❌ Guild ID ต้องเป็นตัวเลข", ephemeral=True)
+                    return
+                guild = self.bot.get_guild(int(guild_id))
+                if not guild:
+                    await interaction.response.send_message("❌ บอทไม่ได้อยู่ในเซิร์ฟเวอร์นี้ หรือไม่พบเซิร์ฟเวอร์", ephemeral=True)
+                    return
+
             # Get bot's member object
-            bot_member = interaction.guild.get_member(self.bot.user.id)
+            bot_member = guild.get_member(self.bot.user.id)
             if not bot_member:
                 await interaction.response.send_message("❌ ไม่พบข้อมูลบอทในเซิร์ฟเวอร์นี้", ephemeral=True)
                 return
@@ -1119,7 +1187,7 @@ class Admin(commands.Cog):
             # Create embed
             embed = discord.Embed(
                 title="🔍 ตรวจสอบสิทธิ์บอท",
-                description=f"เซิร์ฟเวอร์: {interaction.guild.name}",
+                description=f"เซิร์ฟเวอร์: {guild.name}\nGuild ID: `{guild.id}`",
                 color=discord.Color.blue()
             )
 
@@ -1259,15 +1327,22 @@ class Admin(commands.Cog):
 
     @app_commands.command(name="sync", description="ซิงค์คำสั่งกับ Discord")
     @app_commands.checks.has_permissions(administrator=True)
-    async def sync(self, interaction: discord.Interaction, scope: str = "guild", force: bool = False):
+    @app_commands.describe(
+        scope="ขอบเขตการซิงค์: guild, global, all",
+        force="ล้าง Guild commands ที่ซ้ำ/ค้างก่อนซิงค์",
+        reload_system="รีโหลด Cogs แบบเดียวกับ /system_reset หลังซิงค์"
+    )
+    async def sync(self, interaction: discord.Interaction, scope: str = "guild", force: bool = False, reload_system: bool = False):
         """ซิงค์คำสั่งกับ Discord
         
         Parameters
         ----------
         scope: str
             ขอบเขตการซิงค์ (guild, global หรือ all)
-        force: bool
-            บังคับซิงค์ใหม่ทั้งหมด
+            force: bool
+                บังคับซิงค์ใหม่ทั้งหมด
+            reload_system: bool
+                รีโหลด Cogs หลังซิงค์ (รวมความสามารถเดิมของ /system_reset)
         """
         if str(interaction.user.id) != self.allowed_user_id:
             await interaction.response.send_message("❌ เฉพาะเจ้าของบอทเท่านั้นที่สามารถใช้คำสั่งนี้ได้", ephemeral=True)
@@ -1289,9 +1364,10 @@ class Admin(commands.Cog):
             if normalized_scope == "global":
                 # Sync globally
                 if force:
-                    # Clear existing commands first
-                    self.bot.tree.clear_commands(guild=None)
-                    await interaction.followup.send("🗑️ ล้างคำสั่งเก่าทั้งหมดแล้ว", ephemeral=True)
+                    await interaction.followup.send(
+                        "ℹ️ Global force จะซิงค์ชุดคำสั่งปัจจุบันขึ้นใหม่ โดยไม่ล้าง local tree เพื่อกันคำสั่งหายทั้งระบบ",
+                        ephemeral=True
+                    )
                 
                 synced = await self.bot.tree.sync()
                 synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
@@ -1299,29 +1375,65 @@ class Admin(commands.Cog):
                 await interaction.followup.send(f"✅ ซิงค์คำสั่งแบบ Global เรียบร้อย ({synced_count} คำสั่ง)", ephemeral=True)
             elif normalized_scope in {"all", "all_guilds", "allguilds"}:
                 total_synced = 0
+                cleared_guilds = 0
                 for guild in self.bot.guilds:
                     try:
                         if force:
-                            self.bot.tree.clear_commands(guild=guild)
+                            if hasattr(self.bot, "_clear_guild_command_scope"):
+                                guild_synced_count = await self.bot._clear_guild_command_scope(guild, reason="/sync all force")
+                                cleared_guilds += 1 if guild_synced_count is not None else 0
+                            else:
+                                self.bot.tree.clear_commands(guild=guild)
+                                guild_synced = await self.bot.tree.sync(guild=guild)
+                                guild_synced_count = len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
+                                cleared_guilds += 1
+                            logger.info(f"/sync (all force): cleared guild commands in {guild.id} ({guild_synced_count} remaining)")
+                            continue
                         guild_synced = await self.bot.tree.sync(guild=guild)
                         total_synced += len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
                     except Exception as guild_error:
                         logger.warning(f"/sync (all): failed in guild {guild.id}: {guild_error}")
-                await interaction.followup.send(
-                    f"✅ ซิงค์คำสั่งทุกเซิร์ฟเวอร์เรียบร้อย (รวม {total_synced} รายการจาก {len(self.bot.guilds)} เซิร์ฟเวอร์)",
-                    ephemeral=True
-                )
+                if force:
+                    await interaction.followup.send(
+                        f"🧹 ล้าง Guild commands ที่ซ้ำ/ค้างครบ `{cleared_guilds}/{len(self.bot.guilds)}` เซิร์ฟเวอร์แล้ว\n"
+                        "ตอนนี้เมนูควรเหลือ Global commands ชุดเดียว ให้กด Ctrl+R หรือปิดเปิด Discord client ถ้ายังเห็นซ้ำ",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"✅ ซิงค์คำสั่งทุกเซิร์ฟเวอร์เรียบร้อย (รวม {total_synced} รายการจาก {len(self.bot.guilds)} เซิร์ฟเวอร์)",
+                        ephemeral=True
+                    )
             else:
                 # Sync to current guild
                 if force:
-                    # Clear existing commands first
-                    self.bot.tree.clear_commands(guild=interaction.guild)
-                    await interaction.followup.send("🗑️ ล้างคำสั่งเก่าทั้งหมดแล้ว", ephemeral=True)
+                    if hasattr(self.bot, "_clear_guild_command_scope"):
+                        remaining = await self.bot._clear_guild_command_scope(interaction.guild, reason="/sync guild force")
+                        remaining = remaining if remaining is not None else 0
+                    else:
+                        self.bot.tree.clear_commands(guild=interaction.guild)
+                        cleared = await self.bot.tree.sync(guild=interaction.guild)
+                        remaining = len(cleared)
+                    await interaction.followup.send(
+                        f"🧹 ล้าง Guild commands ที่ซ้ำ/ค้างในเซิร์ฟเวอร์นี้แล้ว (`{remaining}` รายการเหลืออยู่)\n"
+                        "ตอนนี้จะเหลือคำสั่ง Global ชุดเดียว ถ้ายังเห็นซ้ำให้กด Ctrl+R หรือรีสตาร์ท Discord client",
+                        ephemeral=True
+                    )
+                    return
                 
                 synced = await self.bot.tree.sync(guild=interaction.guild)
                 synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
                 logger.info(f"/sync (guild): Synced {synced_count} commands to guild {interaction.guild.name}.")
                 await interaction.followup.send(f"✅ ซิงค์คำสั่งกับเซิร์ฟเวอร์นี้เรียบร้อย ({synced_count} คำสั่ง)", ephemeral=True)
+
+            if reload_system:
+                maintenance = self.bot.get_cog("Maintenance")
+                if maintenance and hasattr(maintenance, "perform_reset"):
+                    await interaction.followup.send("🛠️ กำลังรีโหลดระบบต่อจาก /sync...", ephemeral=True)
+                    success, errors = await maintenance.perform_reset()
+                    await interaction.followup.send(f"✅ รีโหลดระบบเสร็จแล้ว: สำเร็จ `{success}` โมดูล, ผิดพลาด `{errors}` โมดูล", ephemeral=True)
+                else:
+                    await interaction.followup.send("⚠️ ไม่พบ Maintenance cog สำหรับรีโหลดระบบ", ephemeral=True)
                 
         except discord.HTTPException as e:
             if e.status == 429:  # Rate limit hit
@@ -1336,20 +1448,48 @@ class Admin(commands.Cog):
                         synced = await self.bot.tree.sync()
                     elif normalized_scope in {"all", "all_guilds", "allguilds"}:
                         total_synced = 0
+                        cleared_guilds = 0
                         for guild in self.bot.guilds:
                             try:
                                 if force:
-                                    self.bot.tree.clear_commands(guild=guild)
+                                    if hasattr(self.bot, "_clear_guild_command_scope"):
+                                        result = await self.bot._clear_guild_command_scope(guild, reason="/sync retry all force")
+                                        cleared_guilds += 1 if result is not None else 0
+                                    else:
+                                        self.bot.tree.clear_commands(guild=guild)
+                                        guild_synced = await self.bot.tree.sync(guild=guild)
+                                        cleared_guilds += 1
+                                        logger.info(f"/sync retry (all force): cleared guild commands in {guild.id} ({len(guild_synced)} remaining)")
+                                    continue
                                 guild_synced = await self.bot.tree.sync(guild=guild)
                                 total_synced += len(guild_synced) if isinstance(guild_synced, list) else int(guild_synced or 0)
                             except Exception as guild_error:
                                 logger.warning(f"/sync retry (all): failed in guild {guild.id}: {guild_error}")
-                        await interaction.followup.send(
-                            f"✅ ซิงค์คำสั่งทุกเซิร์ฟเวอร์เรียบร้อย (รวม {total_synced} รายการจาก {len(self.bot.guilds)} เซิร์ฟเวอร์)",
-                            ephemeral=True
-                        )
+                        if force:
+                            await interaction.followup.send(
+                                f"🧹 ล้าง Guild commands ที่ซ้ำ/ค้างครบ `{cleared_guilds}/{len(self.bot.guilds)}` เซิร์ฟเวอร์แล้ว",
+                                ephemeral=True
+                            )
+                        else:
+                            await interaction.followup.send(
+                                f"✅ ซิงค์คำสั่งทุกเซิร์ฟเวอร์เรียบร้อย (รวม {total_synced} รายการจาก {len(self.bot.guilds)} เซิร์ฟเวอร์)",
+                                ephemeral=True
+                            )
                         return
                     else:
+                        if force:
+                            if hasattr(self.bot, "_clear_guild_command_scope"):
+                                synced_count = await self.bot._clear_guild_command_scope(interaction.guild, reason="/sync retry guild force")
+                                synced_count = synced_count if synced_count is not None else 0
+                            else:
+                                self.bot.tree.clear_commands(guild=interaction.guild)
+                                synced = await self.bot.tree.sync(guild=interaction.guild)
+                                synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
+                            await interaction.followup.send(
+                                f"🧹 ล้าง Guild commands ที่ซ้ำ/ค้างแล้ว (`{synced_count}` รายการเหลืออยู่)",
+                                ephemeral=True
+                            )
+                            return
                         synced = await self.bot.tree.sync(guild=interaction.guild)
                     synced_count = len(synced) if isinstance(synced, list) else int(synced or 0)
                     await interaction.followup.send(f"✅ ซิงค์คำสั่งเรียบร้อย ({synced_count} คำสั่ง)", ephemeral=True)

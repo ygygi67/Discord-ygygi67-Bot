@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 import re
+import socket
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
@@ -84,6 +85,82 @@ def save_network_status(data: dict):
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(NETWORK_STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+COMMAND_USAGE_FILE = os.path.join(DATA_DIR, "command_usage_stats.json")
+DISABLED_LEGACY_COMMANDS = {
+    "ตั้งค่า_serverstats",
+    "ตั้งชื่อ_serverstats",
+    "ตั้งค่า_tempvoice",
+    "ตั้งชื่อ_tempvoice",
+    "เปลี่ยนชื่อห้อง_tempvoice",
+    "queue_stats",
+    "system_sync",
+    "system_reset",
+    "intercom_security",
+    "intercom_setup",
+    "intercom_panel",
+    "intercom_private",
+    "intercom_dm",
+    "intercom_purge",
+    "แชทโลกแผงควบคุม",
+    "ให้แอดมินเซิร์ฟเวอร์",
+    "ลบแอดมินเซิร์ฟเวอร์",
+    "แอดมินเซิร์ฟเวอร์",
+}
+
+def record_app_command_usage(interaction: discord.Interaction, command_name: str, status: str = "success"):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    today = datetime.now().strftime('%Y-%m-%d')
+    guild_id = str(interaction.guild_id or "dm")
+    user_id = str(getattr(interaction.user, "id", "unknown"))
+    try:
+        if os.path.exists(COMMAND_USAGE_FILE):
+            with open(COMMAND_USAGE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {}
+    except Exception:
+        data = {}
+
+    data.setdefault("total", 0)
+    data.setdefault("by_command", {})
+    data.setdefault("by_guild", {})
+    data.setdefault("by_user", {})
+    data.setdefault("daily", {})
+    data.setdefault("events", [])
+
+    data["total"] += 1
+    data["by_command"][command_name] = data["by_command"].get(command_name, 0) + 1
+
+    guild_bucket = data["by_guild"].setdefault(guild_id, {"total": 0, "commands": {}})
+    guild_bucket["total"] += 1
+    guild_bucket["commands"][command_name] = guild_bucket["commands"].get(command_name, 0) + 1
+
+    user_bucket = data["by_user"].setdefault(user_id, {"total": 0, "commands": {}})
+    user_bucket["total"] += 1
+    user_bucket["commands"][command_name] = user_bucket["commands"].get(command_name, 0) + 1
+
+    daily_bucket = data["daily"].setdefault(today, {"total": 0, "commands": {}, "guilds": {}, "users": {}})
+    daily_bucket["total"] += 1
+    daily_bucket["commands"][command_name] = daily_bucket["commands"].get(command_name, 0) + 1
+    daily_bucket["guilds"][guild_id] = daily_bucket["guilds"].get(guild_id, 0) + 1
+    daily_bucket["users"][user_id] = daily_bucket["users"].get(user_id, 0) + 1
+
+    data["events"].append({
+        "time": now_str,
+        "command": command_name,
+        "status": status,
+        "guild_id": guild_id,
+        "guild_name": getattr(getattr(interaction, "guild", None), "name", None),
+        "channel_id": str(getattr(interaction, "channel_id", "") or ""),
+        "user_id": user_id,
+        "user_name": str(getattr(interaction, "user", "")),
+    })
+    data["events"] = data["events"][-1000:]
+
+    with open(COMMAND_USAGE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def resolve_primary_guild_id() -> str | None:
     """Resolve guild ID from env; fallback to data filename prefix."""
@@ -212,6 +289,7 @@ class AlphaBotBase:
         self._graceful_restart_requested = False
         self._stop_requested = False
         self._is_shutting_down = False
+        self._guild_command_cleanup_done = False
         self.active_processes = set()
 
     async def _send_offline_status(self):
@@ -359,6 +437,7 @@ class AlphaBotBase:
     async def on_app_command_completion(self, interaction: discord.Interaction, command):
         try:
             name = getattr(command, "name", None) or getattr(getattr(interaction, "command", None), "name", "unknown")
+            record_app_command_usage(interaction, name, "success")
             logger.info(f"[APP_CMD] done /{name} user={getattr(interaction.user, 'id', None)} guild={interaction.guild_id}")
         except Exception:
             pass
@@ -366,9 +445,65 @@ class AlphaBotBase:
     async def on_app_command_error(self, interaction: discord.Interaction, error):
         try:
             cmd = getattr(getattr(interaction, "command", None), "name", "unknown")
+            record_app_command_usage(interaction, cmd, "error")
             logger.error(f"[APP_CMD] error /{cmd}: {error}")
         except Exception:
             pass
+
+    async def _tree_error_handler(self, interaction: discord.Interaction, error: Exception):
+        if isinstance(error, app_commands.CommandNotFound):
+            name = getattr(error, "name", None) or getattr(interaction, "data", {}).get("name", "unknown")
+            is_legacy = name in DISABLED_LEGACY_COMMANDS
+            msg = (
+                f"⛔ คำสั่ง `/{name}` ถูกปิดใช้งานแล้ว แต่ยังค้างใน Discord client\n"
+                if is_legacy else
+                f"⚠️ คำสั่ง `/{name}` ที่กดเป็นคำสั่งค้าง/ซ้ำจาก Discord cache ไม่ตรงกับชุดคำสั่งในบอทตอนนี้\n"
+            )
+            msg += "ให้ใช้ `/sync scope:guild force:true` เพื่อล้างคำสั่ง Guild ที่ซ้ำ/ค้าง แล้วรีสตาร์ท Discord client"
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
+            except Exception:
+                pass
+            logger.info(f"[APP_CMD] ignored stale command /{name} legacy={is_legacy}")
+            return
+        logger.error(f"[APP_CMD] tree error: {error}")
+
+    async def _clear_guild_command_scope(self, guild: discord.abc.Snowflake, reason: str = "cleanup") -> int | None:
+        """ล้าง Guild-scoped slash commands เพื่อไม่ให้ซ้ำกับ Global commands."""
+        try:
+            self.tree.clear_commands(guild=guild)
+            remaining = await self.tree.sync(guild=guild)
+            remaining_count = len(remaining) if isinstance(remaining, list) else int(remaining or 0)
+            logger.info(f"🧹 Cleared guild command scope ({reason}) guild={guild.id} remaining={remaining_count}")
+            return remaining_count
+        except discord.Forbidden:
+            logger.warning(f"⚠️ Missing access while clearing guild commands ({reason}) guild={guild.id}")
+        except Exception as e:
+            logger.error(f"⚠️ Failed clearing guild commands ({reason}) guild={guild.id}: {e}")
+        return None
+
+    async def _auto_clear_duplicate_guild_commands(self, reason: str = "startup"):
+        """ล้างคำสั่งระดับ Guild ที่เคย copy จาก Global ไว้ ทำให้เมนู Discord ซ้ำทั้งชุด."""
+        if os.getenv("AUTO_CLEAR_GUILD_COMMANDS", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+            logger.info("Auto guild command cleanup skipped (AUTO_CLEAR_GUILD_COMMANDS=0)")
+            return
+
+        guild_ids = {g.id for g in self.guilds}
+        guild_ids.update(resolve_known_guild_ids())
+        if not guild_ids:
+            logger.info("Auto guild command cleanup skipped: no guild ids")
+            return
+
+        cleared = 0
+        for guild_id in sorted(guild_ids):
+            result = await self._clear_guild_command_scope(discord.Object(id=guild_id), reason=reason)
+            if result is not None:
+                cleared += 1
+            await asyncio.sleep(0.4)
+        logger.info(f"🧹 Auto guild command cleanup complete ({reason}) guilds={cleared}/{len(guild_ids)}")
 
     def _save_disabled_commands(self):
         save_console_control({
@@ -612,11 +747,13 @@ class AlphaBotBase:
 
     async def setup_hook(self):
         self._init_runtime_controls()
+        self.disabled_legacy_commands = DISABLED_LEGACY_COMMANDS
         # รองรับ discord.py หลายเวอร์ชัน:
         if hasattr(self.tree, "add_check"):
             self.tree.add_check(self._runtime_app_command_check)
         else:
             setattr(self.tree, "interaction_check", self._runtime_app_command_check)
+        self.tree.on_error = self._tree_error_handler
 
         # Initialize queue for master or standalone mode (any mode that isn't a dedicated worker)
         if not is_worker():
@@ -643,7 +780,7 @@ class AlphaBotBase:
             known_guild_ids = resolve_known_guild_ids()
             if known_guild_ids:
                 # 1) sync global
-                enable_global_sync = os.getenv("ENABLE_GLOBAL_SYNC", "0").strip().lower() in {"1", "true", "yes", "on"}
+                enable_global_sync = os.getenv("ENABLE_GLOBAL_SYNC", "1").strip().lower() in {"1", "true", "yes", "on"}
                 global_cmds = []
                 if enable_global_sync:
                     global_cmds = await self.tree.sync()
@@ -657,29 +794,33 @@ class AlphaBotBase:
                 for c in global_cmds:
                     merged[c.name] = c
 
-                copy_global_to_guild = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "1").strip().lower() in {"1", "true", "yes", "on"}
-                for gid in known_guild_ids:
-                    try:
-                        guild_obj = discord.Object(id=gid)
-                        if copy_global_to_guild:
+                copy_global_to_guild = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+                if copy_global_to_guild:
+                    for gid in known_guild_ids:
+                        try:
+                            guild_obj = discord.Object(id=gid)
                             self.tree.copy_global_to(guild=guild_obj)
-                        guild_cmds = await self.tree.sync(guild=guild_obj)
-                        guild = self.get_guild(gid)
-                        if guild:
-                            guild_name = guild.name
-                        else:
-                            try:
-                                fetched = await self.fetch_guild(gid)
-                                guild_name = fetched.name
-                            except Exception:
-                                guild_name = "Unknown Guild"
-                        logger.info(f"Guild tree synced to {guild_name} ({gid}) ({len(guild_cmds)} guild commands)")
-                        for c in guild_cmds:
-                            merged[c.name] = c
-                    except discord.Forbidden:
-                        logger.warning(f"⚠️ Missing access to sync tree for guild {gid}")
-                    except Exception as sync_error:
-                        logger.warning(f"⚠️ Failed syncing guild {gid}: {sync_error}")
+                            guild_cmds = await self.tree.sync(guild=guild_obj)
+                            guild = self.get_guild(gid)
+                            if guild:
+                                guild_name = guild.name
+                            else:
+                                try:
+                                    fetched = await self.fetch_guild(gid)
+                                    guild_name = fetched.name
+                                except Exception:
+                                    guild_name = "Unknown Guild"
+                            logger.info(f"Guild tree synced to {guild_name} ({gid}) ({len(guild_cmds)} guild commands)")
+                            for c in guild_cmds:
+                                merged[c.name] = c
+                        except discord.Forbidden:
+                            logger.warning(f"⚠️ Missing access to sync tree for guild {gid}")
+                        except Exception as sync_error:
+                            logger.warning(f"⚠️ Failed syncing guild {gid}: {sync_error}")
+                else:
+                    logger.info("Guild command sync skipped (COPY_GLOBAL_TO_KNOWN_GUILDS=0) to avoid duplicate slash commands")
+                    if os.getenv("AUTO_CLEAR_GUILD_COMMANDS_IN_SETUP", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                        await self._auto_clear_duplicate_guild_commands(reason="setup_hook")
 
                 commands_list = list(merged.values())
             else:
@@ -815,27 +956,38 @@ class AlphaBotBase:
                 status_data["recovery_pending"] = True
                 save_network_status(status_data)
             except Exception: pass
+            try:
+                warning_cog = self.get_cog("AlarmWarning")
+                if warning_cog and hasattr(warning_cog, "stop_network_warning"):
+                    await warning_cog.stop_network_warning()
+            except Exception as e:
+                logger.warning(f"Could not stop local network warning player: {e}")
 
             await asyncio.sleep(8)
-            status_channel_id = None
+            status_channel_ids = []
             channels_path = os.path.join(DATA_DIR, 'channels.json')
             if os.path.exists(channels_path):
                 try:
                     with open(channels_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                        status_channel_id = data.get('status_channel')
+                        if data.get('status_channel'):
+                            status_channel_ids.append(int(data.get('status_channel')))
+                        for channel_id in data.get("status_channels", {}).values():
+                            if channel_id and int(channel_id) not in status_channel_ids:
+                                status_channel_ids.append(int(channel_id))
                 except Exception: pass
             
             msg = "🔄 **Network Recovery Report**\nระบบทำการเชื่อมต่อเครือข่ายใหม่สำเร็จแล้ว ขณะนี้บอทกลับมาออนไลน์ตามปกติ รายละเอียดความเสถียรถูกบันทึกลงใน Dashboard เรียบร้อยครับ"
-            if status_channel_id:
+            if status_channel_ids:
                 try:
-                    channel = self.get_channel(status_channel_id) or await self.fetch_channel(status_channel_id)
-                    if channel:
-                        await channel.send(msg)
-                        status_cog = self.get_cog('Status')
-                        if status_cog and hasattr(status_cog, 'update_status_task'):
-                            await asyncio.sleep(2)
-                            asyncio.create_task(status_cog.update_status_task())
+                    for status_channel_id in status_channel_ids:
+                        channel = self.get_channel(status_channel_id) or await self.fetch_channel(status_channel_id)
+                        if channel:
+                            await channel.send(msg)
+                    status_cog = self.get_cog('Status')
+                    if status_cog and hasattr(status_cog, 'update_status_task'):
+                        await asyncio.sleep(2)
+                        asyncio.create_task(status_cog.update_status_task())
                 except Exception: pass
 
             # ลบไฟล์ Flag
@@ -851,6 +1003,7 @@ class AlphaBotBase:
         try:
             previous_status = load_network_status()
             previous_outage = previous_status.get("last_outage")
+            diagnosis = await self._diagnose_network_state()
             with open(NETWORK_ERROR_FILE, 'w', encoding='utf-8') as f:
                 f.write(now_str)
 
@@ -858,12 +1011,83 @@ class AlphaBotBase:
             status_data["last_outage"] = now_str
             status_data["status"] = "offline"
             status_data["last_outage_reason"] = reason
+            status_data["network_kind"] = diagnosis.get("kind", "unknown")
+            status_data["network_detail"] = diagnosis.get("detail", "ตรวจสอบเครือข่ายไม่ได้")
+            status_data["wifi_connected"] = diagnosis.get("wifi_connected")
+            status_data["internet_reachable"] = diagnosis.get("internet_reachable")
+            status_data["dns_ok"] = diagnosis.get("dns_ok")
             status_data["recovery_pending"] = False
             save_network_status(status_data)
+            if status_data.get("network_kind") == "wifi_disconnected":
+                warning_cog = self.get_cog("AlarmWarning")
+                if warning_cog and hasattr(warning_cog, "play_network_warning"):
+                    asyncio.create_task(warning_cog.play_network_warning(diagnosis))
             if previous_outage != now_str:
-                logger.warning(f"Saved network outage status: {now_str} ({reason})")
+                logger.warning(f"Saved network outage status: {now_str} ({reason}) kind={status_data['network_kind']}")
         except Exception as e:
             logger.error(f"Could not save network outage status: {e}")
+
+    async def _diagnose_network_state(self) -> dict:
+        """แยกสาเหตุเน็ตหลุด: Wi‑Fi ไม่ได้ต่อ vs ต่ออยู่แต่ไม่มีอินเทอร์เน็ต/DNS ล่ม."""
+        wifi_connected = None
+        wifi_detail = "ไม่พบข้อมูล Wi‑Fi"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "netsh", "wlan", "show", "interfaces",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+            netsh_text = (stdout + stderr).decode("utf-8", errors="ignore")
+            lowered = netsh_text.lower()
+            if "state" in lowered or "สถานะ" in lowered:
+                wifi_connected = "connected" in lowered or "เชื่อมต่อ" in lowered
+            if "ssid" in lowered:
+                ssid_line = next((line.strip() for line in netsh_text.splitlines() if "SSID" in line and "BSSID" not in line), "")
+                if ssid_line:
+                    wifi_detail = ssid_line
+        except Exception as e:
+            wifi_detail = f"ตรวจ Wi‑Fi ไม่ได้: {e}"
+
+        internet_reachable = False
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection("1.1.1.1", 53), timeout=4)
+            writer.close()
+            await writer.wait_closed()
+            internet_reachable = True
+        except Exception:
+            internet_reachable = False
+
+        dns_ok = False
+        try:
+            await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, "discord.com", 443), timeout=4)
+            dns_ok = True
+        except Exception:
+            dns_ok = False
+
+        if wifi_connected is False:
+            kind = "wifi_disconnected"
+            detail = f"เครื่องไม่ได้เชื่อมต่อ Wi‑Fi หรือไม่มี interface พร้อมใช้งาน ({wifi_detail})"
+        elif internet_reachable and not dns_ok:
+            kind = "dns_failure"
+            detail = "เชื่อมต่ออินเทอร์เน็ตได้ แต่ DNS resolve discord.com ไม่ได้"
+        elif wifi_connected and not internet_reachable:
+            kind = "wifi_connected_no_internet"
+            detail = f"Wi‑Fi ยังเชื่อมต่ออยู่ แต่ต่อออกอินเทอร์เน็ตไม่ได้ ({wifi_detail})"
+        elif not internet_reachable:
+            kind = "internet_unreachable"
+            detail = "ต่อออกอินเทอร์เน็ตไม่ได้ อาจเป็นสาย/Wi‑Fi/Router/ISP ขัดข้อง"
+        else:
+            kind = "discord_gateway_only"
+            detail = "อินเทอร์เน็ตพื้นฐานยังตอบสนอง อาจเป็น Discord gateway หรือ routing ชั่วคราว"
+
+        return {
+            "kind": kind,
+            "detail": detail,
+            "wifi_connected": wifi_connected,
+            "internet_reachable": internet_reachable,
+            "dns_ok": dns_ok,
+        }
 
     async def _resume_music_after_network_recovery(self):
         """Resume saved music sessions after Discord gateway/network recovery."""
@@ -920,6 +1144,9 @@ class AlphaBotBase:
             return
 
         logger.info(f"✅ {self.mode.capitalize()} Ready! User: {self.user}")
+        if not self._guild_command_cleanup_done:
+            self._guild_command_cleanup_done = True
+            asyncio.create_task(self._auto_clear_duplicate_guild_commands(reason="on_ready"))
         
         # 1. ตรวจสอบสถานะการปิดตัวล่าสุด
         # ถ้ามี ALIVE_FLAG ค้างอยู่ แสดงว่าไม่ได้ปิดแบบปกติ (Unexpected Shutdown)
@@ -945,7 +1172,7 @@ class AlphaBotBase:
 
         # กวาด Sync คำสั่งไปยังกิลด์ทั้งหมดที่บอทอาศัยอยู่ แต่ยังไม่เคยถูก Sync ใน setup_hook
         try:
-            copy_global = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "1").strip().lower() in {"1", "true", "yes", "on"}
+            copy_global = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "0").strip().lower() in {"1", "true", "yes", "on"}
             if copy_global:
                 known = set(resolve_known_guild_ids())
                 for g in self.guilds:
@@ -971,7 +1198,7 @@ class AlphaBotBase:
     async def on_guild_join(self, guild):
         logger.info(f"🤖 Bot joined a new server: {guild.name} (ID: {guild.id})")
         try:
-            copy_global = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "1").strip().lower() in {"1", "true", "yes", "on"}
+            copy_global = os.getenv("COPY_GLOBAL_TO_KNOWN_GUILDS", "0").strip().lower() in {"1", "true", "yes", "on"}
             if copy_global:
                 self.tree.copy_global_to(guild=guild)
                 cmds = await self.tree.sync(guild=guild)

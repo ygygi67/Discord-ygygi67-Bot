@@ -11,9 +11,16 @@ import tempfile
 import speech_recognition as sr
 import io
 import json
+import zipfile
 from typing import Optional
 
 logger = logging.getLogger('discord_bot')
+
+TTS_DIRECT_TEXT_LIMIT = 4000
+TTS_FILE_TEXT_LIMIT = 20000
+TTS_CHUNK_LIMIT = 1200
+AUTO_TTS_MESSAGE_LIMIT = 500
+TTS_CONFIG_FILE = "data/tts_config.json"
 
 def _resolve_primary_guild_id() -> Optional[int]:
     use_guild_scope = os.getenv("USE_GUILD_SCOPED_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -44,8 +51,207 @@ class TTSCommand(commands.Cog):
         self.tts_queue = {}  # {guild_id: asyncio.Queue}
         self.is_playing = {} # {guild_id: bool}
         self.state_file = 'data/tts_state.json'
+        self.config_file = TTS_CONFIG_FILE
+        self.config = self._load_config()
         self.active_filenames = set() # เก็บไฟล์ที่ยังต้องใช้ห้ามลบ
         self.cleanup_task = self.bot.loop.create_task(self._initial_cleanup())
+
+    def _load_config(self):
+        os.makedirs("data", exist_ok=True)
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        data.setdefault("auto_tts_enabled", {})
+        return data
+
+    def _save_config(self):
+        os.makedirs("data", exist_ok=True)
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            json.dump(self.config, f, ensure_ascii=False, indent=4)
+
+    def _auto_tts_enabled(self, guild_id: int):
+        return bool(self.config.get("auto_tts_enabled", {}).get(str(guild_id), True))
+
+    def _set_auto_tts_enabled(self, guild_id: int, enabled: bool):
+        self.config.setdefault("auto_tts_enabled", {})[str(guild_id)] = bool(enabled)
+        self._save_config()
+
+    def _split_tts_text(self, text: str, limit: int = TTS_CHUNK_LIMIT):
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return []
+        chunks = []
+        current = ""
+        parts = re.split(r"([.!?。！？\n])", text)
+        sentences = []
+        for index in range(0, len(parts), 2):
+            sentence = parts[index]
+            if index + 1 < len(parts):
+                sentence += parts[index + 1]
+            sentence = sentence.strip()
+            if sentence:
+                sentences.append(sentence)
+
+        for sentence in sentences or [text]:
+            if len(sentence) > limit:
+                for start in range(0, len(sentence), limit):
+                    piece = sentence[start:start + limit].strip()
+                    if piece:
+                        chunks.append(piece)
+                current = ""
+                continue
+            if current and len(current) + len(sentence) + 1 > limit:
+                chunks.append(current.strip())
+                current = sentence
+            else:
+                current = f"{current} {sentence}".strip()
+        if current:
+            chunks.append(current.strip())
+        return chunks
+
+    def _detect_tts_language(self, text: str):
+        sample = text.strip()
+        if re.search(r"[\u0E00-\u0E7F]", sample):
+            return "th"
+        if re.search(r"[\u3040-\u30ff]", sample):
+            return "ja"
+        if re.search(r"[\uac00-\ud7af]", sample):
+            return "ko"
+        if re.search(r"[\u4e00-\u9fff]", sample):
+            return "zh-CN"
+        if re.search(r"[\u0400-\u04FF]", sample):
+            return "ru"
+        if re.search(r"[\u0600-\u06FF]", sample):
+            return "ar"
+        lowered = sample.lower()
+        language_hints = [
+            ("es", r"\b(el|la|los|las|una|para|gracias|hola|porque)\b|[¿¡ñ]"),
+            ("fr", r"\b(le|la|les|des|bonjour|merci|pourquoi|avec)\b|[çœ]"),
+            ("de", r"\b(der|die|das|und|nicht|danke|hallo|warum)\b|[äöüß]"),
+            ("it", r"\b(il|lo|gli|ciao|grazie|perché|sono)\b"),
+            ("pt", r"\b(o|a|os|as|obrigado|olá|porque|você)\b|[ãõç]"),
+            ("id", r"\b(aku|kamu|terima kasih|selamat|yang|dan)\b"),
+            ("vi", r"[ăâđêôơư]|[àáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]"),
+        ]
+        for lang, pattern in language_hints:
+            if re.search(pattern, lowered):
+                return lang
+        return "en" if re.search(r"[a-zA-Z]", sample) else "th"
+
+    async def _read_text_attachment(self, attachment: discord.Attachment):
+        filename = (attachment.filename or "").lower()
+        content_type = (attachment.content_type or "").lower()
+        if not (filename.endswith(".txt") or content_type.startswith("text/")):
+            raise ValueError("not_text_file")
+        if attachment.size and attachment.size > 256 * 1024:
+            raise ValueError("file_too_large")
+        raw = await attachment.read(use_cached=True)
+        return raw.decode("utf-8-sig", errors="ignore").strip()
+
+    def _is_voice_text_channel_message(self, message: discord.Message):
+        if not message.guild or message.author.bot:
+            return False
+        if not self._auto_tts_enabled(message.guild.id):
+            return False
+        if not isinstance(message.author, discord.Member):
+            return False
+        if not message.author.voice or not message.author.voice.channel:
+            return False
+        return getattr(message.channel, "id", None) == message.author.voice.channel.id
+
+    def _describe_attachment(self, attachment: discord.Attachment):
+        filename = attachment.filename or "ไม่ทราบชื่อไฟล์"
+        content_type = (attachment.content_type or "").lower()
+        lower_name = filename.lower()
+        if content_type.startswith("image/") or lower_name.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+            return f"ส่งรูปภาพ {filename}"
+        if content_type.startswith("audio/") or lower_name.endswith((".mp3", ".wav", ".ogg", ".m4a", ".flac", ".opus")):
+            return f"ส่งไฟล์เสียง {filename}"
+        if content_type.startswith("video/") or lower_name.endswith((".mp4", ".mov", ".webm", ".mkv")):
+            return f"ส่งวิดีโอ {filename}"
+        return f"ส่งไฟล์ {filename}"
+
+    def _message_to_auto_tts_text(self, message: discord.Message):
+        author_name = getattr(message.author, "display_name", message.author.name)
+        pieces = []
+        content = (message.clean_content or "").strip()
+        url_pattern = r"https?://\S+"
+        urls = re.findall(url_pattern, content)
+        content_without_urls = re.sub(url_pattern, "", content).strip()
+        if content_without_urls:
+            pieces.append(content_without_urls)
+        if urls:
+            pieces.append(f"{author_name} ส่งลิงก์ {len(urls)} ลิงก์")
+        for attachment in message.attachments:
+            pieces.append(f"{author_name} {self._describe_attachment(attachment)}")
+        if message.stickers:
+            pieces.append(f"{author_name} ส่งสติกเกอร์")
+        return " ".join(pieces).strip()
+
+    async def _queue_tts_for_member(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        text: str,
+        channel: discord.abc.Messageable | None = None,
+        announce: bool = False,
+    ):
+        text = (text or "").strip()
+        if not text:
+            return False
+        user_channel = member.voice.channel if member.voice else None
+        if not user_channel:
+            return False
+
+        if not guild.voice_client:
+            await user_channel.connect()
+        elif guild.voice_client.channel != user_channel:
+            try:
+                await guild.voice_client.move_to(user_channel)
+            except Exception:
+                pass
+
+        chunks = self._split_tts_text(text)
+        generated_files = []
+        for index, chunk in enumerate(chunks, 1):
+            filename = f"tts_temp_{uuid.uuid4().hex[:8]}_auto_{index}.mp3"
+
+            def generate_tts(chunk_text=chunk, output=filename):
+                lang = self._detect_tts_language(chunk_text)
+                tts = gTTS(text=chunk_text, lang=lang)
+                tts.save(output)
+
+            await self.bot.loop.run_in_executor(None, generate_tts)
+            generated_files.append((filename, chunk))
+
+        if guild.id not in self.tts_queue:
+            self.tts_queue[guild.id] = asyncio.Queue()
+        for file_path, chunk in generated_files:
+            await self.tts_queue[guild.id].put((file_path, chunk))
+        self._save_state()
+
+        if not self.is_playing.get(guild.id, False):
+            for _ in range(5):
+                if guild.voice_client and guild.voice_client.is_connected():
+                    break
+                await asyncio.sleep(1)
+            if guild.voice_client and guild.voice_client.is_connected():
+                if not guild.voice_client.is_playing():
+                    await self._play_next(guild.id)
+                else:
+                    self.is_playing[guild.id] = True
+
+        if announce and channel:
+            try:
+                await channel.send(f"🗣️ พูดตามข้อความของ {member.mention} แล้ว")
+            except Exception:
+                pass
+        return True
 
     async def cog_load(self):
         """เมื่อโหลด Cog ให้ทำการพยายามพูดต่อจากเดิม"""
@@ -175,23 +381,68 @@ class TTSCommand(commands.Cog):
                 pass
             self.bot.loop.create_task(self._play_next(guild_id))
 
-    @app_commands.command(name="พูดตาม", description="สั่งให้บอทพูดข้อความที่คุณต้องการ (พิมพ์ยาวแค่ไหนก็ได้)")
+    @app_commands.command(name="พูดตาม", description="สั่งให้บอทพูดข้อความ หรืออ่านข้อความจากไฟล์ .txt")
     @_guild_scope_decorator()
     @app_commands.describe(
-        text="ข้อความที่ต้องการให้บอทพูด",
-        ส่งไฟล์เสียง="แนบไฟล์เสียงที่สร้างกลับมาในแชทด้วยหรือไม่"
+        text="ข้อความที่ต้องการให้บอทพูด (สูงสุด 4,000 ตัวอักษรตามข้อจำกัด Discord)",
+        ไฟล์ข้อความ="ไฟล์ .txt สำหรับข้อความยาว (ระบบรับสูงสุด 20,000 ตัวอักษร)",
+        ส่งไฟล์เสียง="แนบไฟล์เสียงที่สร้างกลับมาในแชทด้วยหรือไม่",
+        พูดอัตโนมัติ="เปิด/ปิดการพูดตามอัตโนมัติในแชทช่องเสียงของเซิร์ฟเวอร์นี้"
     )
-    async def speak(self, interaction: discord.Interaction, text: str, ส่งไฟล์เสียง: bool = False):
+    async def speak(
+        self,
+        interaction: discord.Interaction,
+        text: Optional[str] = None,
+        ไฟล์ข้อความ: Optional[discord.Attachment] = None,
+        ส่งไฟล์เสียง: bool = False,
+        พูดอัตโนมัติ: Optional[bool] = None,
+    ):
         """รับข้อความเสียงและสร้าง TTS"""
+        if พูดอัตโนมัติ is not None:
+            if not interaction.guild:
+                return await interaction.response.send_message("❌ ตั้งค่าพูดอัตโนมัติได้เฉพาะในเซิร์ฟเวอร์", ephemeral=True)
+            can_manage = (
+                getattr(interaction.user, "guild_permissions", None)
+                and interaction.user.guild_permissions.manage_guild
+            )
+            if not can_manage:
+                return await interaction.response.send_message("❌ ต้องมีสิทธิ์จัดการเซิร์ฟเวอร์เพื่อเปิด/ปิดพูดอัตโนมัติ", ephemeral=True)
+            self._set_auto_tts_enabled(interaction.guild.id, พูดอัตโนมัติ)
+            status = "เปิด" if พูดอัตโนมัติ else "ปิด"
+            if not text and not ไฟล์ข้อความ:
+                return await interaction.response.send_message(f"✅ {status}ระบบพูดตามอัตโนมัติในแชทช่องเสียงแล้ว", ephemeral=True)
+
+        if not text and not ไฟล์ข้อความ:
+            return await interaction.response.send_message("❌ กรุณาใส่ข้อความ หรือแนบไฟล์ `.txt` ครับ", ephemeral=True)
         
-        # ตรวจสอบการเชื่อมต่อเสียง (ถ้าขอแค่ไฟล์เสียง ไม่ต้องอยู่ห้องเสียงก็ได้)
-        if not interaction.user.voice and not ส่งไฟล์เสียง:
-            return await interaction.response.send_message("❌ คุณต้องอยู่ในช่องเสียงก่อน หรือเลือกตั้งค่า `ส่งไฟล์เสียง` เป็น True เพื่อรับแค่ไฟล์ครับ", ephemeral=True)
+        # ถ้าไม่ได้อยู่ห้องเสียง ให้ส่งไฟล์เสียงกลับไปอัตโนมัติแทนการ error
+        if not interaction.user.voice:
+            ส่งไฟล์เสียง = True
 
         user_channel = interaction.user.voice.channel if interaction.user.voice else None
         guild = interaction.guild
 
         await interaction.response.defer()
+
+        try:
+            if ไฟล์ข้อความ:
+                text_from_file = await self._read_text_attachment(ไฟล์ข้อความ)
+                text = f"{text or ''}\n{text_from_file}".strip()
+        except ValueError as error:
+            code = str(error)
+            if code == "not_text_file":
+                return await interaction.followup.send("❌ รองรับเฉพาะไฟล์ `.txt` หรือไฟล์ text เท่านั้น")
+            if code == "file_too_large":
+                return await interaction.followup.send("❌ ไฟล์ข้อความใหญ่เกินไป จำกัดที่ 256KB")
+            return await interaction.followup.send("❌ อ่านไฟล์ข้อความไม่สำเร็จ")
+
+        text = (text or "").strip()
+        if len(text) > TTS_FILE_TEXT_LIMIT:
+            return await interaction.followup.send(f"❌ ข้อความยาวเกินไป ระบบรับสูงสุด `{TTS_FILE_TEXT_LIMIT:,}` ตัวอักษร")
+
+        chunks = self._split_tts_text(text)
+        if not chunks:
+            return await interaction.followup.send("❌ ข้อความว่างเปล่า หรือไม่มีส่วนที่อ่านได้")
 
         # เชื่อมต่อช่องเสียง (เฉพาะกรณีที่คนพิมพ์อยู่ในห้องเสียง)
         if user_channel:
@@ -207,34 +458,48 @@ class TTSCommand(commands.Cog):
                     pass
 
         try:
-            # สร้างไฟล์ออดิโอแยกชิ้นเพื่อไม่ให้ชนกันเวลาใช้งานรัวๆ
-            filename = f"tts_temp_{uuid.uuid4().hex[:8]}.mp3"
-            
-            # ใช้ loop run_in_executor เพื่อไม่ให้การเจนเเสียงไปบล็อคการทำงานของบอท
-            def generate_tts():
-                tts = gTTS(text=text, lang='th')
-                tts.save(filename)
-                
-            await self.bot.loop.run_in_executor(None, generate_tts)
+            generated_files = []
+            for index, chunk in enumerate(chunks, 1):
+                filename = f"tts_temp_{uuid.uuid4().hex[:8]}_{index}.mp3"
+
+                def generate_tts(chunk_text=chunk, output=filename):
+                    lang = self._detect_tts_language(chunk_text)
+                    tts = gTTS(text=chunk_text, lang=lang)
+                    tts.save(output)
+
+                await self.bot.loop.run_in_executor(None, generate_tts)
+                generated_files.append((filename, chunk))
             
             # ตอบกลับ
             if ส่งไฟล์เสียง:
-                with open(filename, "rb") as audio_file:
-                    audio_bytes = audio_file.read()
-                preview_file = discord.File(io.BytesIO(audio_bytes), filename=f"tts_preview_{interaction.user.id}.mp3")
-                await interaction.followup.send(
-                    f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}",
-                    file=preview_file
-                )
+                if len(generated_files) == 1:
+                    with open(generated_files[0][0], "rb") as audio_file:
+                        audio_bytes = audio_file.read()
+                    preview_file = discord.File(io.BytesIO(audio_bytes), filename=f"tts_preview_{interaction.user.id}.mp3")
+                    await interaction.followup.send(
+                        f"🗣️ **สั่งให้บอทพูด:** `{len(text):,}` ตัวอักษร / `{len(chunks)}` ท่อน\n> {text[:1800]}",
+                        file=preview_file
+                    )
+                else:
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                        for index, (file_path, _) in enumerate(generated_files, 1):
+                            archive.write(file_path, arcname=f"tts_part_{index:02d}.mp3")
+                    zip_buffer.seek(0)
+                    await interaction.followup.send(
+                        f"🗣️ **สร้างเสียงพูดแล้ว:** `{len(text):,}` ตัวอักษร / `{len(chunks)}` ท่อน",
+                        file=discord.File(zip_buffer, filename=f"tts_preview_{interaction.user.id}.zip")
+                    )
             else:
-                await interaction.followup.send(f"🗣️ **สั่งให้บอทพูด:**\n> {text[:1900]}")
+                await interaction.followup.send(f"🗣️ **สั่งให้บอทพูด:** `{len(text):,}` ตัวอักษร / `{len(chunks)}` ท่อน\n> {text[:1800]}")
             
             # ใช้งาน Queue และเล่นเสียงเฉพาะเมื่อแชนแนลมีอยู่จริง (อยู่ในห้องเสียง)
             if user_channel:
                 if guild.id not in self.tts_queue:
                     self.tts_queue[guild.id] = asyncio.Queue()
                     
-                await self.tts_queue[guild.id].put((filename, text))
+                for file_path, chunk in generated_files:
+                    await self.tts_queue[guild.id].put((file_path, chunk))
                 self._save_state() # จดคิวลงไฟล์ทันที
                 
                 # ถ้าระบบไม่ได้เล่นอยู่ให้เริ่มเล่น
@@ -254,11 +519,12 @@ class TTSCommand(commands.Cog):
                         self.is_playing[guild.id] = False
             else:
                 # ถ้าไม่ได้เข้าห้องเสียง แปลว่าสร้างมาเพื่อเอาไฟล์เฉยๆ สามารถลบไฟล์ต้นฉบับได้เลย
-                try:
-                    if os.path.exists(filename):
-                        os.remove(filename)
-                except:
-                    pass
+                for file_path, _ in generated_files:
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                    except:
+                        pass
                     
         except Exception as e:
             if not self.bot.is_closed():
@@ -267,6 +533,28 @@ class TTSCommand(commands.Cog):
                 try:
                     await interaction.followup.send("❌ เกิดข้อผิดพลาดในการสร้างเสียงพูด กรุณาลองใหม่")
                 except: pass
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if not self._is_voice_text_channel_message(message):
+            return
+        content = self._message_to_auto_tts_text(message)
+        if not content or content.startswith(("/", "!", ".")):
+            return
+        if len(content) > AUTO_TTS_MESSAGE_LIMIT:
+            try:
+                await message.channel.send(
+                    f"⚠️ ข้อความยาวเกินไปสำหรับพูดตามอัตโนมัติ จำกัด `{AUTO_TTS_MESSAGE_LIMIT}` ตัวอักษร "
+                    "ถ้าต้องการพูดยาวให้ใช้ `/พูดตาม` ครับ",
+                    delete_after=8,
+                )
+            except Exception:
+                pass
+            return
+        try:
+            await self._queue_tts_for_member(message.guild, message.author, content)
+        except Exception as e:
+            logger.error(f"Auto voice-channel TTS failed: {e}")
 
     def _parse_message_reference(self, raw: str):
         value = raw.strip()

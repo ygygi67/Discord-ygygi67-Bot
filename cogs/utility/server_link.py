@@ -51,6 +51,7 @@ def _save_config(data: dict):
 
 def get_guild_settings(guild_id: int) -> dict:
     config = _load_config()
+    global_security = config.get("_global_security", {}) if isinstance(config.get("_global_security", {}), dict) else {}
     defaults = {
         "private_room_enabled": False,
         "private_room_category_id": None,
@@ -69,6 +70,17 @@ def get_guild_settings(guild_id: int) -> dict:
     guild_data = config.get(str(guild_id), {})
     for k, v in defaults.items():
         if k not in guild_data:
+            guild_data[k] = list(v) if isinstance(v, list) else v
+    for k in (
+        "anti_spam_enabled",
+        "content_filter_enabled",
+        "link_filter_enabled",
+        "approved_link_domains",
+        "custom_blocked_words",
+        "intercom_log_channel_id",
+    ):
+        if k in global_security:
+            v = global_security[k]
             guild_data[k] = list(v) if isinstance(v, list) else v
     return guild_data
 
@@ -136,6 +148,38 @@ class ServerLink(commands.Cog):
     def cog_unload(self):
         self.reminder_task.cancel()
 
+    async def _notify_intercom_network_join(self, guild: discord.Guild, channel: discord.TextChannel):
+        config = _load_config()
+        targets = []
+        for gid_str, settings in config.items():
+            if not isinstance(settings, dict):
+                continue
+            target_id = settings.get("intercom_channel_id")
+            if target_id:
+                targets.append((int(gid_str), int(target_id)))
+
+        embed = discord.Embed(
+            title="🌐 มีเซิร์ฟเวอร์ใหม่เข้าร่วม Intercom",
+            description=(
+                f"เซิร์ฟเวอร์ **{guild.name}** เข้าร่วมระบบคุยข้ามเซิร์ฟเวอร์แล้ว\n"
+                f"ห้องที่ใช้คุย: {channel.mention}"
+            ),
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
+        embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+
+        for target_guild_id, target_channel_id in targets:
+            try:
+                target = self.bot.get_channel(target_channel_id) or await self.bot.fetch_channel(target_channel_id)
+                if target:
+                    await target.send(embed=embed)
+            except Exception as e:
+                logger.warning(f"Failed to notify intercom join target guild={target_guild_id} channel={target_channel_id}: {e}")
+
     def _extract_domains(self, text: str) -> list[str]:
         domains: list[str] = []
         for url in URL_PATTERN.findall(text or ""):
@@ -199,7 +243,7 @@ class ServerLink(commands.Cog):
                     bad = ", ".join(sorted(set(unapproved))[:4])
                     return False, (
                         f"🔒 พบลิงก์ที่ยังไม่อนุมัติ: {bad}\n"
-                        f"ให้แอดมินใช้ `/intercom_security action:approve` เพื่ออนุมัติโดเมนก่อน"
+                        "โดเมนนี้ยังไม่อยู่ในไฟล์อนุญาตลิงก์ของแชทโลก กรุณาให้แอดมินบอทแก้ในไฟล์ตั้งค่าระบบ"
                     )
 
         return True, ""
@@ -484,18 +528,20 @@ class ServerLink(commands.Cog):
     # 🌐 INTERCOM (CROSS-SERVER CHAT)
     # ──────────────────────────────────────
 
-    @app_commands.command(name="intercom_setup", description="🌐 ตั้งค่าห้องนี้เป็นห้องคุยข้ามเซิร์ฟเวอร์ (Intercom)")
+    @app_commands.command(name="แชทโลกตั้งห้อง", description="🌐 ตั้งช่องปัจจุบันให้เป็นห้องแชทโลก เชื่อมข้อความกับเซิร์ฟเวอร์อื่น")
     @app_commands.default_permissions(manage_channels=True)
     async def intercom_setup(self, interaction: discord.Interaction):
         settings = get_guild_settings(interaction.guild_id)
         if not settings["cross_chat_enabled"]:
-            await interaction.response.send_message("❌ ระบบคุยข้ามเซิร์ฟเวอร์ยังไม่เปิดใช้งาน (ใช้ `/setup_server` เพื่อเปิดก่อน)", ephemeral=True)
+            await interaction.response.send_message("❌ ระบบแชทโลกยังไม่เปิดใช้งาน (ใช้ `/setup_server` เพื่อเปิดก่อน)", ephemeral=True)
             return
 
         update_guild_settings(interaction.guild_id, intercom_channel_id=interaction.channel_id)
-        await interaction.response.send_message(f"✅ ตั้งค่า {interaction.channel.mention} เป็นห้อง Intercom เรียบร้อย!", ephemeral=True)
+        await interaction.response.send_message(f"✅ ตั้งค่า {interaction.channel.mention} เป็นห้องแชทโลกเรียบร้อย!", ephemeral=True)
+        await self._notify_intercom_network_join(interaction.guild, interaction.channel)
 
-    @app_commands.command(name="intercom_security", description="🛡️ จัดการระบบความปลอดภัย Intercom แบบรวม (สแปม/คำไม่เหมาะสม/ลิงก์/log)")
+    # Disabled slash command: security remains file-configured, not per-guild via slash command.
+    # @app_commands.command(name="intercom_security", description="🛡️ จัดการระบบความปลอดภัย Intercom แบบรวม (สแปม/คำไม่เหมาะสม/ลิงก์/log)")
     @app_commands.describe(
         action="เลือกการทำงาน",
         value="ใช้กับ approve/unapprove เช่น โดเมนหรือ URL",
@@ -641,7 +687,8 @@ class ServerLink(commands.Cog):
         embed = self._build_security_embed(guild_id)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="intercom_panel", description="🎛️ เปิดแผงควบคุม Intercom Security แบบปุ่มกด")
+    # Disabled slash command: แชทโลก security is configured globally in data/server_link_config.json.
+    # @app_commands.command(name="แชทโลกแผงควบคุม", description="🎛️ เปิดแผงดูสถานะและจัดการความปลอดภัยของระบบแชทโลก")
     async def intercom_panel(self, interaction: discord.Interaction):
         embed = self._build_security_embed(interaction.guild_id)
         view = IntercomSecurityView(self, interaction.guild_id, owner_user_id=interaction.user.id)
@@ -772,8 +819,8 @@ class ServerLink(commands.Cog):
                 discord.Color.blue()
             )
 
-    @app_commands.command(name="intercom_private", description="🌐 ส่งข้อความ Intercom เฉพาะเซิร์ฟเวอร์ที่เลือก (Directed Mode)")
-    @app_commands.describe(server_id="เลือกเซิร์ฟเวอร์เป้าหมาย", message="ข้อความที่ต้องการส่ง")
+    @app_commands.command(name="แชทโลกส่งหาเซิร์ฟเวอร์", description="🌐 ส่งข้อความแชทโลกไปหาเซิร์ฟเวอร์เป้าหมายโดยตรง")
+    @app_commands.describe(server_id="เลือกเซิร์ฟเวอร์เป้าหมาย", message="ข้อความที่จะส่งไปยังเซิร์ฟเวอร์นั้น")
     @app_commands.autocomplete(server_id=server_id_autocomplete)
     async def intercom_private(self, interaction: discord.Interaction, server_id: str, message: str):
         settings = get_guild_settings(interaction.guild_id)
@@ -810,12 +857,12 @@ class ServerLink(commands.Cog):
         config = _load_config()
         target_data = config.get(server_id, {})
         if not target_data.get("cross_chat_enabled") or not target_data.get("intercom_channel_id"):
-            await interaction.response.send_message(f"❌ เซิร์ฟเวอร์ {target_guild.name} ไม่ได้เปิดระบบ Intercom หรือไม่มีห้องรับ", ephemeral=True)
+            await interaction.response.send_message(f"❌ เซิร์ฟเวอร์ {target_guild.name} ไม่ได้เปิดระบบแชทโลกหรือไม่มีห้องรับ", ephemeral=True)
             return
 
         target_channel = target_guild.get_channel(target_data["intercom_channel_id"])
         if not target_channel:
-            await interaction.response.send_message("❌ ไม่พบห้อง Intercom ในเซิร์ฟเวอร์เป้าหมาย", ephemeral=True)
+            await interaction.response.send_message("❌ ไม่พบห้องแชทโลกในเซิร์ฟเวอร์เป้าหมาย", ephemeral=True)
             return
 
         embed = discord.Embed(
@@ -834,13 +881,13 @@ class ServerLink(commands.Cog):
         )
         await interaction.response.send_message(f"✅ ส่งข้อความไปยัง {target_guild.name} เรียบร้อย!", ephemeral=True)
 
-    @app_commands.command(name="intercom_dm", description="🌐 ส่งข้อความ DM ข้ามเซิร์ฟเวอร์ (หาจากรายชื่อสมาชิกในเซิร์ฟเวอร์อื่น)")
-    @app_commands.describe(server_id="เซิร์ฟเวอร์เป้าหมาย", user_id="สมาชิกเป้าหมาย (ID)", message="ข้อความ")
+    @app_commands.command(name="แชทโลกส่งdm", description="🌐 ส่ง DM ผ่านระบบแชทโลกไปหาสมาชิกในเซิร์ฟเวอร์อื่น")
+    @app_commands.describe(server_id="เซิร์ฟเวอร์เป้าหมาย", user_id="ID สมาชิกเป้าหมาย", message="ข้อความที่จะส่ง DM")
     @app_commands.autocomplete(server_id=server_id_autocomplete)
     async def intercom_dm(self, interaction: discord.Interaction, server_id: str, user_id: str, message: str):
         settings = get_guild_settings(interaction.guild_id)
         if not settings["cross_chat_enabled"]:
-            await interaction.response.send_message("❌ ระบบข้ามเซิร์ฟเวอร์ปิดอยู่", ephemeral=True)
+            await interaction.response.send_message("❌ ระบบแชทโลกปิดอยู่", ephemeral=True)
             return
 
         is_ok, reason = self._validate_intercom_message(interaction.guild_id, interaction.user.id, message)
@@ -905,7 +952,7 @@ class ServerLink(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"❌ ส่ง DM ไม่สำเร็จ: {e}", ephemeral=True)
 
-    @app_commands.command(name="intercom_purge", description="🧹 ลบข้อความไม่เหมาะสมจากต้นทางและข้อความที่กระจายไปแล้ว (Bot Admin)")
+    @app_commands.command(name="แชทโลกลบข้อความ", description="🧹 ลบข้อความแชทโลกจากต้นทางและทุกเซิร์ฟเวอร์ที่กระจายไปแล้ว")
     @app_commands.describe(
         link_or_id="ลิงก์ข้อความ Discord หรือ Message ID",
         channel="ช่องของข้อความ (ใช้เมื่อใส่แค่ Message ID)"
