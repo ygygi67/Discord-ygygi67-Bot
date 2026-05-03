@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.normpath(os.path.join(_BASE, "..", "..", "data", "server_link_config.json"))
 MESSAGE_MAP_PATH = os.path.normpath(os.path.join(_BASE, "..", "..", "data", "intercom_message_map.json"))
+DM_ROOMS_PATH = os.path.normpath(os.path.join(_BASE, "..", "..", "data", "intercom_dm_rooms.json"))
 URL_PATTERN = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
 BLOCKED_WORDS = {
     "ควย", "เหี้ย", "สัส", "สัด", "fuck", "bitch", "nigger", "porn", "xxx"
@@ -55,6 +56,7 @@ def get_guild_settings(guild_id: int) -> dict:
     defaults = {
         "private_room_enabled": False,
         "private_room_category_id": None,
+        "intercom_dm_category_id": None,
         "ai_room_allowed": True,
         "cross_chat_enabled": False,
         "intercom_channel_id": None,
@@ -91,6 +93,7 @@ def update_guild_settings(guild_id: int, **kwargs):
         config[gid_str] = {
             "private_room_enabled": False,
             "private_room_category_id": None,
+            "intercom_dm_category_id": None,
             "ai_room_allowed": True,
             "cross_chat_enabled": False,
             "intercom_channel_id": None,
@@ -122,6 +125,23 @@ def _save_message_map(data: dict):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Error saving intercom_message_map: {e}")
+
+def _load_dm_rooms() -> dict:
+    try:
+        if os.path.exists(DM_ROOMS_PATH):
+            with open(DM_ROOMS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading intercom_dm_rooms: {e}")
+    return {}
+
+def _save_dm_rooms(data: dict):
+    try:
+        os.makedirs(os.path.dirname(DM_ROOMS_PATH), exist_ok=True)
+        with open(DM_ROOMS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving intercom_dm_rooms: {e}")
 
 class ServerSetupView(discord.ui.View):
     def __init__(self, guild_id: int):
@@ -286,6 +306,97 @@ class ServerLink(commands.Cog):
             embed.set_image(url=source_message.attachments[0].url)
         return embed
 
+    def _sanitize_channel_name(self, raw: str, *, fallback: str = "dm-room") -> str:
+        text = (raw or "").lower()
+        text = re.sub(r"\s+", "-", text)
+        text = re.sub(r"[^a-z0-9ก-๙_-]", "", text)
+        text = re.sub(r"-{2,}", "-", text).strip("-_")
+        return (text or fallback)[:90]
+
+    def _find_dm_room_by_channel(self, channel_id: int) -> Optional[tuple[str, dict]]:
+        rooms = _load_dm_rooms()
+        channel_id = int(channel_id)
+        for room_id, room in rooms.items():
+            if room.get("closed"):
+                continue
+            if int(room.get("channel_a", 0)) == channel_id or int(room.get("channel_b", 0)) == channel_id:
+                return room_id, room
+        return None
+
+    def _build_dm_relay_embed(self, source_message: discord.Message) -> discord.Embed:
+        embed = discord.Embed(
+            title="💌 ห้อง DM ข้ามเซิร์ฟ",
+            description=source_message.content or "‎",
+            color=discord.Color.purple(),
+            timestamp=source_message.created_at
+        )
+        self._apply_intercom_meta(
+            embed,
+            user=source_message.author,
+            guild=source_message.guild,
+            source_message_id=source_message.id
+        )
+        if source_message.attachments:
+            attachment_lines = [f"[{idx}. {a.filename}]({a.url})" for idx, a in enumerate(source_message.attachments, start=1)]
+            embed.add_field(name="ไฟล์แนบ", value="\n".join(attachment_lines[:10]), inline=False)
+            image = next((a for a in source_message.attachments if (a.content_type or "").startswith("image/")), None)
+            if image:
+                embed.set_image(url=image.url)
+        return embed
+
+    async def _relay_dm_room_message(self, message: discord.Message) -> bool:
+        found = self._find_dm_room_by_channel(message.channel.id)
+        if not found:
+            return False
+
+        _, room = found
+        channel_id = int(message.channel.id)
+        if channel_id == int(room.get("channel_a", 0)):
+            target_channel_id = int(room.get("channel_b", 0))
+        else:
+            target_channel_id = int(room.get("channel_a", 0))
+
+        is_ok, reason = self._validate_intercom_message(message.guild.id, message.author.id, message.content)
+        if not is_ok:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            try:
+                notice = await message.channel.send(f"{message.author.mention} {reason}")
+                await asyncio.sleep(8)
+                await notice.delete()
+            except Exception:
+                pass
+            await self._send_security_log(
+                message.guild.id,
+                "🚫 Cross DM Relay Blocked",
+                f"ผู้ใช้: {message.author.mention}\nเหตุผล: {reason}\nข้อความ: {message.content[:300]}",
+                discord.Color.orange()
+            )
+            return True
+
+        target_channel = self.bot.get_channel(target_channel_id)
+        if not target_channel:
+            try:
+                target_channel = await self.bot.fetch_channel(target_channel_id)
+            except Exception:
+                target_channel = None
+
+        if not isinstance(target_channel, discord.TextChannel):
+            await message.channel.send("⚠️ ห้องปลายทางของ DM ข้ามเซิร์ฟหายไปหรือบอทเข้าไม่ถึง")
+            return True
+
+        try:
+            await target_channel.send(embed=self._build_dm_relay_embed(message))
+        except Exception as e:
+            logger.warning(f"Failed to relay cross-server DM room message: {e}")
+            try:
+                await message.channel.send("⚠️ ส่งข้อความไปห้องปลายทางไม่สำเร็จ")
+            except Exception:
+                pass
+        return True
+
     def _can_manage_intercom(self, interaction: discord.Interaction) -> bool:
         if self._is_bot_admin(interaction.user.id):
             return True
@@ -414,6 +525,7 @@ class ServerLink(commands.Cog):
     @app_commands.describe(
         private_room="เปิดใช้งานระบบคำสั่งสร้างห้องคุยส่วนตัว (/private_chat)",
         category="เลือกหมวดหมู่ที่จะสร้างห้อง (ถ้าไม่เลือก บอทจะสร้างเอง)",
+        dm_category="หมวดหมู่ที่จะให้บอทสร้างห้อง DM ข้ามเซิร์ฟเวอร์",
         ai_room="อนุญาตให้ผู้เล่นใช้คำสั่ง /ai_myroom ของบอท",
         cross_chat="เปิดใช้งานระบบคุยข้ามเซิร์ฟเวอร์ (Intercom)",
         reminder="เปิด/ปิด การแจ้งเตือนตั้งค่ารายสัปดาห์ (DM หาผู้สร้างเซิร์ฟ)"
@@ -424,6 +536,7 @@ class ServerLink(commands.Cog):
         interaction: discord.Interaction, 
         private_room: Optional[bool] = None,
         category: Optional[discord.CategoryChannel] = None,
+        dm_category: Optional[discord.CategoryChannel] = None,
         ai_room: Optional[bool] = None,
         cross_chat: Optional[bool] = None,
         reminder: Optional[bool] = None
@@ -432,6 +545,7 @@ class ServerLink(commands.Cog):
         updates = {}
         if private_room is not None: updates["private_room_enabled"] = private_room
         if category is not None: updates["private_room_category_id"] = category.id
+        if dm_category is not None: updates["intercom_dm_category_id"] = dm_category.id
         if ai_room is not None: updates["ai_room_allowed"] = ai_room
         if cross_chat is not None: updates["cross_chat_enabled"] = cross_chat
         if reminder is not None: updates["remind_setup"] = reminder
@@ -444,12 +558,10 @@ class ServerLink(commands.Cog):
             embed.add_field(name="📂 หมวดหมู่", value=cat.mention if cat else "สร้างเองอัตโนมัติ", inline=True)
             embed.add_field(name="🤖 AI Room Allowed", value="✅ ใช่" if settings["ai_room_allowed"] else "❌ ไม่", inline=True)
             embed.add_field(name="🌐 คุยข้ามเซิร์ฟ", value="✅ เปิด" if settings["cross_chat_enabled"] else "❌ ปิด", inline=True)
+            dm_cat = interaction.guild.get_channel(settings.get("intercom_dm_category_id")) if settings.get("intercom_dm_category_id") else None
+            embed.add_field(name="💌 หมวด DM ข้ามเซิร์ฟ", value=dm_cat.mention if dm_cat else "ยังไม่ได้ตั้ง", inline=True)
             embed.add_field(name="🔔 แจ้งเตือนตั้งค่า (Week)", value="✅ เปิด" if settings["remind_setup"] else "❌ ปิด", inline=True)
-            embed.add_field(name="🛡️ กันสแปม", value="✅ เปิด" if settings.get("anti_spam_enabled", True) else "❌ ปิด", inline=True)
-            embed.add_field(name="🚫 กรองคำไม่เหมาะสม", value="✅ เปิด" if settings.get("content_filter_enabled", True) else "❌ ปิด", inline=True)
-            embed.add_field(name="🔗 กรองลิงก์", value="✅ เปิด" if settings.get("link_filter_enabled", True) else "❌ ปิด", inline=True)
-            log_channel = interaction.guild.get_channel(settings.get("intercom_log_channel_id")) if settings.get("intercom_log_channel_id") else None
-            embed.add_field(name="🧾 ห้อง Log", value=(log_channel.mention if log_channel else "ยังไม่ได้ตั้ง"), inline=False)
+            embed.set_footer(text="ตั้งค่าความปลอดภัยแชทโลกแบบรวมทุกเซิร์ฟเวอร์ได้ใน data/server_link_config.json")
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
@@ -698,6 +810,8 @@ class ServerLink(commands.Cog):
         config = _load_config()
         choices = []
         for gid_str, data in config.items():
+            if not str(gid_str).isdigit() or not isinstance(data, dict):
+                continue
             if int(gid_str) == interaction.guild_id:
                 continue
             if data.get("cross_chat_enabled"):
@@ -710,6 +824,9 @@ class ServerLink(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
+            return
+
+        if await self._relay_dm_room_message(message):
             return
 
         settings = get_guild_settings(message.guild.id)
@@ -740,6 +857,8 @@ class ServerLink(commands.Cog):
         config = _load_config()
         sent_records: list[dict[str, int]] = []
         for gid_str, data in config.items():
+            if not str(gid_str).isdigit() or not isinstance(data, dict):
+                continue
             if int(gid_str) == message.guild.id:
                 continue
             
@@ -881,25 +1000,20 @@ class ServerLink(commands.Cog):
         )
         await interaction.response.send_message(f"✅ ส่งข้อความไปยัง {target_guild.name} เรียบร้อย!", ephemeral=True)
 
-    @app_commands.command(name="แชทโลกส่งdm", description="🌐 ส่ง DM ผ่านระบบแชทโลกไปหาสมาชิกในเซิร์ฟเวอร์อื่น")
-    @app_commands.describe(server_id="เซิร์ฟเวอร์เป้าหมาย", user_id="ID สมาชิกเป้าหมาย", message="ข้อความที่จะส่ง DM")
+    @app_commands.command(name="แชทโลกสร้างห้องdm", description="💌 สร้างห้อง DM คู่ข้ามเซิร์ฟเวอร์ ไม่ส่ง DM จริง")
+    @app_commands.describe(server_id="เซิร์ฟเวอร์เป้าหมาย", user_id="ID สมาชิกเป้าหมาย")
     @app_commands.autocomplete(server_id=server_id_autocomplete)
-    async def intercom_dm(self, interaction: discord.Interaction, server_id: str, user_id: str, message: str):
+    async def intercom_dm(self, interaction: discord.Interaction, server_id: str, user_id: str):
         settings = get_guild_settings(interaction.guild_id)
         if not settings["cross_chat_enabled"]:
             await interaction.response.send_message("❌ ระบบแชทโลกปิดอยู่", ephemeral=True)
             return
 
-        is_ok, reason = self._validate_intercom_message(interaction.guild_id, interaction.user.id, message)
-        if not is_ok:
-            await interaction.response.send_message(reason, ephemeral=True)
-            await self._send_security_log(
-                interaction.guild_id,
-                "🚫 Intercom DM Blocked",
-                f"ผู้ใช้: {interaction.user.mention}\nเหตุผล: {reason}\nข้อความ: {message[:300]}",
-                discord.Color.orange()
-            )
+        if not settings.get("intercom_dm_category_id"):
+            await interaction.response.send_message("❌ เซิร์ฟเวอร์นี้ยังไม่ได้ตั้งหมวด DM ข้ามเซิร์ฟใน `/setup_server dm_category:`", ephemeral=True)
             return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
         target_guild = None
         if server_id.isdigit():
@@ -911,46 +1025,131 @@ class ServerLink(commands.Cog):
                     break
 
         if not target_guild:
-            await interaction.response.send_message("❌ ไม่พบเซิร์ฟเวอร์ที่ระบุ", ephemeral=True)
+            await interaction.followup.send("❌ ไม่พบเซิร์ฟเวอร์ที่ระบุ")
             return
 
         server_id = str(target_guild.id)
 
-        config = _load_config()
-        if not config.get(server_id, {}).get("cross_chat_enabled"):
-            await interaction.response.send_message("❌ เซิร์ฟเวอร์เป้าหมายปิดระบบข้ามเซิร์ฟเวอร์อยู่", ephemeral=True)
+        target_settings = get_guild_settings(target_guild.id)
+        if not target_settings.get("cross_chat_enabled"):
+            await interaction.followup.send("❌ เซิร์ฟเวอร์เป้าหมายปิดระบบข้ามเซิร์ฟเวอร์อยู่")
+            return
+
+        if not target_settings.get("intercom_dm_category_id"):
+            await interaction.followup.send("❌ เซิร์ฟเวอร์เป้าหมายยังไม่ได้ตั้งหมวด DM ข้ามเซิร์ฟใน `/setup_server dm_category:`")
             return
 
         try:
             target_member = target_guild.get_member(int(user_id)) or await target_guild.fetch_member(int(user_id))
         except discord.NotFound:
-            await interaction.response.send_message("❌ ไม่พบสมาชิก User ID นี้ในเซิร์ฟเวอร์เป้าหมาย (Unknown User)", ephemeral=True)
+            await interaction.followup.send("❌ ไม่พบสมาชิก User ID นี้ในเซิร์ฟเวอร์เป้าหมาย (Unknown User)")
             return
         except Exception as e:
-            await interaction.response.send_message(f"❌ เกิดข้อผิดพลาดในการค้นหาผู้ใช้: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดในการค้นหาผู้ใช้: {e}")
             return
 
         if not target_member:
-            await interaction.response.send_message("❌ ไม่พบสมาชิกในเซิร์ฟเวอร์นั้น", ephemeral=True)
+            await interaction.followup.send("❌ ไม่พบสมาชิกในเซิร์ฟเวอร์นั้น")
             return
 
+        if target_member.bot:
+            await interaction.followup.send("❌ ไม่สามารถสร้างห้อง DM ข้ามเซิร์ฟกับบอทได้")
+            return
+
+        rooms = _load_dm_rooms()
+        for room_id, room in rooms.items():
+            if room.get("closed"):
+                continue
+            same_pair = {
+                (int(room.get("guild_a", 0)), int(room.get("user_a", 0))),
+                (int(room.get("guild_b", 0)), int(room.get("user_b", 0))),
+            } == {
+                (interaction.guild_id, interaction.user.id),
+                (target_guild.id, target_member.id),
+            }
+            if same_pair:
+                source_channel = interaction.guild.get_channel(int(room.get("channel_a", 0)))
+                if int(room.get("guild_b", 0)) == interaction.guild_id:
+                    source_channel = interaction.guild.get_channel(int(room.get("channel_b", 0)))
+                if source_channel:
+                    await interaction.followup.send(f"ℹ️ มีห้อง DM ข้ามเซิร์ฟคู่นี้อยู่แล้ว: {source_channel.mention}")
+                    return
+
+        source_category = interaction.guild.get_channel(int(settings["intercom_dm_category_id"]))
+        target_category = target_guild.get_channel(int(target_settings["intercom_dm_category_id"]))
+        if not isinstance(source_category, discord.CategoryChannel):
+            update_guild_settings(interaction.guild_id, intercom_dm_category_id=None)
+            await interaction.followup.send("❌ หมวด DM ข้ามเซิร์ฟของเซิร์ฟเวอร์นี้หายไป กรุณาตั้งใหม่ด้วย `/setup_server dm_category:`")
+            return
+        if not isinstance(target_category, discord.CategoryChannel):
+            update_guild_settings(target_guild.id, intercom_dm_category_id=None)
+            await interaction.followup.send("❌ หมวด DM ข้ามเซิร์ฟของเซิร์ฟเวอร์เป้าหมายหายไป ต้องให้เซิร์ฟเวอร์นั้นตั้งใหม่ก่อน")
+            return
+
+        source_channel = None
+        target_channel = None
         try:
-            embed = discord.Embed(
-                title="📧 Cross-Server DM",
-                description=message,
-                color=discord.Color.green()
+            source_overwrites = {
+                interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+                interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_channels=True),
+            }
+            target_overwrites = {
+                target_guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                target_member: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+                target_guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_channels=True),
+            }
+            safe_source_name = self._sanitize_channel_name(interaction.user.display_name, fallback="source")
+            safe_target_name = self._sanitize_channel_name(target_member.display_name, fallback="target")
+            source_channel = await interaction.guild.create_text_channel(
+                name=self._sanitize_channel_name(f"dm-{safe_source_name}-{safe_target_name}"),
+                category=source_category,
+                overwrites=source_overwrites,
+                topic=f"💌 Cross-server DM room with {target_member.id} in {target_guild.id}"
             )
-            self._apply_intercom_meta(embed, user=interaction.user, guild=interaction.guild)
-            await target_member.send(embed=embed)
-            await self._send_security_log(
-                interaction.guild_id,
-                "📧 Intercom DM Sent",
-                f"จาก {interaction.user.mention} ไปหา `{target_member.id}` ในเซิร์ฟ `{target_guild.id}`",
-                discord.Color.green()
+            target_channel = await target_guild.create_text_channel(
+                name=self._sanitize_channel_name(f"dm-{safe_target_name}-{safe_source_name}"),
+                category=target_category,
+                overwrites=target_overwrites,
+                topic=f"💌 Cross-server DM room with {interaction.user.id} in {interaction.guild_id}"
             )
-            await interaction.response.send_message(f"✅ ส่ง DM หา {target_member.name} สำเร็จ!", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"❌ ส่ง DM ไม่สำเร็จ: {e}", ephemeral=True)
+            for channel in (source_channel, target_channel):
+                if channel:
+                    try:
+                        await channel.delete(reason="Cross-server DM room setup failed")
+                    except Exception:
+                        pass
+            await interaction.followup.send(f"❌ สร้างห้อง DM ข้ามเซิร์ฟไม่สำเร็จ: {e}")
+            return
+
+        room_id = f"{source_channel.id}:{target_channel.id}"
+        rooms[room_id] = {
+            "guild_a": interaction.guild_id,
+            "channel_a": source_channel.id,
+            "user_a": interaction.user.id,
+            "guild_b": target_guild.id,
+            "channel_b": target_channel.id,
+            "user_b": target_member.id,
+            "created_by": interaction.user.id,
+            "created_at": datetime.utcnow().isoformat(),
+            "closed": False,
+        }
+        _save_dm_rooms(rooms)
+
+        await source_channel.send(
+            f"💌 {interaction.user.mention} ห้อง DM ข้ามเซิร์ฟกับ **{target_member.display_name}** ในเซิร์ฟเวอร์ **{target_guild.name}** พร้อมใช้งานแล้ว"
+        )
+        await target_channel.send(
+            f"💌 {target_member.mention} ห้อง DM ข้ามเซิร์ฟกับ **{interaction.user.display_name}** ในเซิร์ฟเวอร์ **{interaction.guild.name}** พร้อมใช้งานแล้ว"
+        )
+        await self._send_security_log(
+            interaction.guild_id,
+            "💌 Cross DM Room Created",
+            f"จาก {interaction.user.mention} ไปหา `{target_member.id}` ในเซิร์ฟ `{target_guild.id}`\nห้องต้นทาง: {source_channel.mention}",
+            discord.Color.green()
+        )
+        await interaction.followup.send(f"✅ สร้างห้อง DM ข้ามเซิร์ฟสำเร็จ: {source_channel.mention}")
 
     @app_commands.command(name="แชทโลกลบข้อความ", description="🧹 ลบข้อความแชทโลกจากต้นทางและทุกเซิร์ฟเวอร์ที่กระจายไปแล้ว")
     @app_commands.describe(
